@@ -53,6 +53,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
+import xgboost as xgb
+import shap
+
 # Configure plot styles
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
 plt.rcParams['font.sans-serif'] = 'DejaVu Sans'
@@ -219,15 +225,12 @@ print(segment_summary[['segment', 'customer_count', 'pct_customers', 'formatted_
 """)
 
 # Step 3: Cohort Retention Analysis
-add_md("""## 3. Cohort Retention Analysis
+add_md("""## 3. Cohort Retention Analysis & Cumulative Reconciliation
 
 ### 📖 How This Works (Interview Explanation)
 **Cohort Retention Analysis** tracks how groups of customers (acquired in the same starting month) continue to purchase over time.
-* **Acquisition Month (Cohort):** Month of the customer's very first order.
-* **Period Index ($M+0, M+1, M+2, \\dots$):** Number of months elapsed since acquisition.
-* **Retention Rate (%):** Percentage of the initial cohort size that returned to make at least one purchase in Month $k$.
-
-This highlights organic retention decay and identifies if certain acquisition cohorts (e.g. Diwali festive sale buyers) exhibit higher long-term stickiness compared to baseline cohorts.
+* **Monthly Active Rate (Heatmap):** Percentage of customers who purchased *specifically during month $k$* (showing 3.5%–5.7% active in Month 1).
+* **Cumulative Repeat Retention:** Percentage of customers who have made *at least one repeat order by Month $k$*. Because the average inter-purchase interval is **120.1 days (~4 months)**, repeat orders trickle in gradually over time, accumulating to the full **25.49% lifetime repeat rate** by Month 12+.
 """)
 
 add_code("""# Cohort Retention Calculation
@@ -245,28 +248,45 @@ retention_matrix = cohort_pivot.divide(cohort_size, axis=0) * 100
 
 # Plot Cohort Retention Heatmap
 plt.figure(figsize=(12, 7))
-sns.heatmap(retention_matrix.iloc[:12, :8], annot=True, fmt='.1f', cmap='YlGnBu', vmin=0, vmax=15, cbar_kws={'label': 'Retention Rate (%)'})
-plt.title('Monthly Cohort Retention Heatmap (%) — Indian E-Commerce', fontsize=14, fontweight='bold', pad=15)
+sns.heatmap(retention_matrix.iloc[:12, :8], annot=True, fmt='.1f', cmap='YlGnBu', vmin=0, vmax=15, cbar_kws={'label': 'Active Rate (%)'})
+plt.title('Monthly Active Cohort Heatmap (%) — Indian E-Commerce', fontsize=14, fontweight='bold', pad=15)
 plt.xlabel('Months Since Acquisition (Month 0 to Month 7)', fontsize=11)
 plt.ylabel('Acquisition Cohort Month', fontsize=11)
 plt.tight_layout()
 os.makedirs('../dashboard', exist_ok=True)
 plt.savefig('../dashboard/cohort_retention_heatmap.png', dpi=300)
-plt.show()
+plt.close()
 print(' [OK] Saved cohort retention heatmap to dashboard/cohort_retention_heatmap.png')
+
+# Cumulative Repeat Retention Table
+cust_orders = fact_df.sort_values(['customer_id', 'order_dt'])
+cust_orders['order_seq'] = cust_orders.groupby('customer_id').cumcount() + 1
+order2 = cust_orders[cust_orders['order_seq'] == 2].copy()
+order2['seq2_period'] = (order2['order_month'].dt.year - order2['cohort_month'].dt.year) * 12 + (order2['order_month'].dt.month - order2['cohort_month'].dt.month)
+
+early_cohorts = fact_df[fact_df['cohort_month'] <= '2024-06']['customer_id'].nunique()
+order2_early = order2[order2['cohort_month'] <= '2024-06']
+
+cum_data = []
+for k in range(0, 7):
+    cum_repeat = (order2_early['seq2_period'] <= k).sum()
+    pct = round(cum_repeat / early_cohorts * 100, 2)
+    cum_data.append({'Month_Elapsed': f'Month {k}', 'Cumulative_Repeat_Customers': cum_repeat, 'Cumulative_Repeat_Rate_Pct': pct})
+
+cum_df = pd.DataFrame(cum_data)
+print('=== CUMULATIVE REPEAT RETENTION RECONCILIATION ===')
+print(cum_df.to_string(index=False))
 """)
 
 # Step 4: Purchase Funnel Analysis
 add_md("""## 4. Repeat Purchase Funnel Analysis
 
 ### 📖 How This Works (Interview Explanation)
-While traditional marketing funnels measure *Impressions → Clicks → Add-to-Cart → Purchase*, **Repeat Purchase Funnels** measure post-acquisition milestone progression:
-* **1st Order (100%):** Acquisition baseline.
-* **2nd Order:** Conversion from 1st to 2nd purchase (Key retention friction point).
-* **3rd Order:** Conversion from 2nd to 3rd purchase.
-* **4th+ Order:** Conversion to power user / loyal repeat buyer.
-
-By evaluating conversion rates between milestones, product analysts identify where customer drop-off is highest and focus retention interventions (such as post-first-purchase 30-day coupon workflows) at the exact leak point.
+The **Repeat Purchase Funnel** evaluates conversion rates between transactional milestones:
+* **1st Order (100%):** Acquisition baseline (18,497 customers).
+* **2nd Order:** 4,714 customers (**25.49% retention**, 74.51% drop-off).
+* **3rd Order:** 1,354 customers (**28.72% conversion** from 2nd order).
+* **4th+ Order:** 316 customers (**23.34% conversion** from 3rd order).
 """)
 
 add_code("""# Repeat Purchase Funnel Progression
@@ -303,12 +323,126 @@ ax.set_ylabel('Unique Customers', fontsize=11)
 ax.set_ylim(0, f1_cust * 1.15)
 plt.tight_layout()
 plt.savefig('../dashboard/repeat_purchase_funnel.png', dpi=300)
-plt.show()
+plt.close()
 print(' [OK] Saved repeat purchase funnel chart to dashboard/repeat_purchase_funnel.png')
+""")
+
+# Step 5: Churn Prediction Model
+add_md("""## 5. Churn Prediction Model (Class-Weighted Logistic Regression & XGBoost)
+
+### 📖 How This Works (Interview Explanation)
+In e-commerce, **Churn** is defined as post-purchase inactivity exceeding **90 days** (aligned with our 120-day inter-purchase cycle). 
+* **Class Imbalance:** 68.4% of customers are churned (>90 days inactive) vs. 31.6% active.
+* **Imbalance Handling:** Rather than focusing solely on overall accuracy, we utilize **`class_weight='balanced'`** in Logistic Regression and **`scale_pos_weight`** in XGBoost to penalize false negatives and evaluate **Precision, Recall, and F1-Score for the minority/active class** as rigorously as **ROC-AUC**.
+""")
+
+add_code("""# Feature Engineering for Churn Prediction
+max_dt = fact_df['order_dt'].max()
+
+cust_features = fact_df.groupby('customer_id').agg(
+    last_order=('order_dt', 'max'),
+    frequency=('order_id', 'nunique'),
+    monetary=('order_total_amount', 'sum'),
+    avg_order_val=('order_total_amount', 'mean'),
+    avg_items=('total_items', 'mean'),
+    avg_delay=('delivery_delay_days', 'mean'),
+    avg_review=('review_score', 'mean'),
+    cod_ratio=('payment_method', lambda x: (x == 'COD').mean()),
+    is_tier1=('city_tier', lambda x: 1 if (x.iloc[0] == 'Tier 1') else 0)
+).reset_index()
+
+cust_features['recency_days'] = (max_dt - cust_features['last_order']).dt.days
+cust_features['avg_delay'] = cust_features['avg_delay'].fillna(0)
+cust_features['avg_review'] = cust_features['avg_review'].fillna(4.0)
+
+# Target: 1 = Churned (>90 days inactive), 0 = Active (<= 90 days)
+cust_features['is_churned'] = (cust_features['recency_days'] > 90).astype(int)
+
+feature_cols = ['frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 'avg_review', 'cod_ratio', 'is_tier1']
+X = cust_features[feature_cols]
+y = cust_features['is_churned']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+
+print(f'Train shape: {X_train.shape}, Test shape: {X_test.shape}')
+print('Train Class Distribution:')
+print(y_train.value_counts(normalize=True).round(4)*100)
+""")
+
+add_code("""# 1. Logistic Regression Baseline (Class-Weighted)
+lr = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42)
+lr.fit(X_train, y_train)
+lr_preds = lr.predict(X_test)
+lr_probs = lr.predict_proba(X_test)[:, 1]
+
+print('=== MODEL 1: LOGISTIC REGRESSION BASELINE ===')
+print('ROC-AUC Score:', round(roc_auc_score(y_test, lr_probs), 4))
+print(classification_report(y_test, lr_preds, digits=4))
+
+# 2. XGBoost Classifier (Class-Weighted via scale_pos_weight)
+scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+xgb_model = xgb.XGBClassifier(
+    n_estimators=100,
+    max_depth=4,
+    learning_rate=0.05,
+    scale_pos_weight=scale_pos_weight,
+    random_state=42
+)
+xgb_model.fit(X_train, y_train)
+xgb_preds = xgb_model.predict(X_test)
+xgb_probs = xgb_model.predict_proba(X_test)[:, 1]
+
+print('=== MODEL 2: XGBOOST CLASSIFIER ===')
+print('ROC-AUC Score:', round(roc_auc_score(y_test, xgb_probs), 4))
+print(classification_report(y_test, xgb_preds, digits=4))
+
+# Plot Confusion Matrices
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+ConfusionMatrixDisplay.from_predictions(y_test, lr_preds, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[0].set_title('Logistic Regression Confusion Matrix', fontweight='bold')
+
+ConfusionMatrixDisplay.from_predictions(y_test, xgb_preds, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[1].set_title('XGBoost Confusion Matrix', fontweight='bold')
+plt.tight_layout()
+plt.savefig('../dashboard/churn_confusion_matrices.png', dpi=300)
+plt.close()
+print(' [OK] Saved confusion matrices to dashboard/churn_confusion_matrices.png')
+""")
+
+# Step 6: SHAP Feature Importance
+add_md("""## 6. SHAP Feature Importance & Driver Analysis
+
+### 📖 How This Works (Interview Explanation)
+**SHAP (SHapley Additive exPlanations)** applies game theory to measure how much each behavioral feature shifts a customer's churn probability relative to the baseline dataset prediction.
+* **Beeswarm Summary Plot:** Shows feature impact magnitude and direction (e.g. higher delivery delay shifts prediction toward churn).
+* **Global Importance Bar Plot:** Ranks features by average absolute SHAP value.
+""")
+
+add_code("""# TreeSHAP Explainer on XGBoost Model
+explainer = shap.TreeExplainer(xgb_model)
+shap_values = explainer.shap_values(X_test)
+
+mean_abs_shap = np.abs(shap_values).mean(axis=0)
+shap_summary = pd.DataFrame({'feature': feature_cols, 'shap_importance': mean_abs_shap}).sort_values('shap_importance', ascending=False)
+
+print('=== SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
+print(shap_summary.to_string(index=False))
+
+# Export summary CSV for Power BI
+shap_summary.to_csv('../dashboard/shap_driver_importance.csv', index=False)
+
+# SHAP Beeswarm Summary Plot
+plt.figure(figsize=(10, 6))
+shap.summary_plot(shap_values, X_test, feature_names=feature_cols, show=False)
+plt.title('SHAP Feature Importance Beeswarm Plot (Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
+plt.tight_layout()
+plt.savefig('../dashboard/shap_beeswarm_summary.png', dpi=300)
+plt.close()
+print(' [OK] Saved SHAP summary plot to dashboard/shap_beeswarm_summary.png')
 """)
 
 os.makedirs('notebooks', exist_ok=True)
 with open('notebooks/01_ecommerce_customer_intelligence.ipynb', 'w', encoding='utf-8') as f:
     json.dump(nb, f, indent=2)
 
-print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with Steps 1-4')
+print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with Steps 1-6')
