@@ -2,7 +2,8 @@
 
 **Target Roles:** Product Analyst | Business Analyst | Data Analyst  
 **Tech Stack:** SQL (SQLite), Python (Pandas, Scikit-learn, XGBoost, SHAP, Lifetimes), Power BI  
-**Local Project Path:** `D:\Ssshhhh\Projexts\E commerce`
+**Local Project Path:** `D:\Ssshhhh\Projexts\E commerce`  
+**GitHub Repository:** [`Ayusshhhhh01/ecommerce-customer-intelligence`](https://github.com/Ayusshhhhh01/ecommerce-customer-intelligence.git)
 
 ---
 
@@ -26,8 +27,8 @@ Leadership in an e-commerce platform needs actionable answers to four core custo
 D:\Ssshhhh\Projexts\E commerce\
 ├── data/                                 # Synthetic Indian E-Commerce CSVs
 │   ├── customers.csv                     # 20,000 customers (Tier 1 Metros & Tier 2/3)
-│   ├── orders.csv                        # 35,000 orders (UPI, COD, Card, Net Banking)
-│   ├── order_items.csv                   # 45,400+ line items in ₹ INR
+│   ├── orders.csv                        # 27,537 orders (UPI, COD, Card, Net Banking)
+│   ├── order_items.csv                   # 35,782 line items in ₹ INR
 │   ├── delivery_info.csv                 # Promised vs Actual Delivery Date & Latency
 │   ├── reviews.csv                       # Customer Review Scores (1-5)
 │   └── DATASET_DISCLOSURE.md             # Dataset disclaimer documentation
@@ -35,33 +36,62 @@ D:\Ssshhhh\Projexts\E commerce\
 │   ├── 01_customer_order_fact.sql        # Fact table construction
 │   └── 02_rfm_metrics.sql                # RFM aggregations & LAG window functions
 ├── notebooks/                            # Jupyter Notebooks
-│   └── 01_ecommerce_customer_intelligence.ipynb
+│   └── 01_ecommerce_customer_intelligence.ipynb # Complete 10-step executable notebook
+├── dashboard/                            # Exported summary tables & visuals for Power BI
+│   ├── cohort_retention_heatmap.png      # Monthly active cohort heatmap
+│   ├── repeat_purchase_funnel.png        # Lifecycle milestone funnel chart
+│   ├── churn_confusion_matrices.png      # Confusion matrix comparison
+│   ├── shap_beeswarm_summary.png         # TreeSHAP global driver plot
+│   ├── rfm_segment_summary.csv           # RFM summary table
+│   ├── churn_trend_monthly.csv           # Monthly revenue and active user trends
+│   ├── shap_driver_importance.csv        # SHAP feature rankings
+│   ├── clv_distribution_tiers.csv        # BG/NBD + Gamma-Gamma CLV tiers
+│   └── next_best_action_summary.csv      # 3x3 Prescriptive action matrix
 ├── generate_indian_dataset.py            # Synthetic dataset generator script
 ├── generate_indian_notebook.py           # Notebook generator script
+├── EXECUTIVE_SUMMARY.md                  # 1-page business report for leadership
+├── RESUME_BULLETS.md                     # 3 metric-backed, interview-ready resume bullets
 └── README.md                             # Project documentation
 ```
 
 ---
 
-## 🚀 Key Results (Steps 1 & 2 Completed)
+## 🚀 Executive Highlights & Key Results
 
-- **Total Delivered Transactions:** 31,716 delivered order records across **18,934 unique customers**.
-- **Total Historical Delivered Revenue:** **₹14.12 Crore** (Exact: ₹14,11,68,546.87).
-- **Repeat Purchase Rate:** **42.79%** (8,102 repeat buyers out of 18,934 delivered customers).
-- **Average Inter-Purchase Interval:** **114.4 days** for repeat buyers.
+- **Total Delivered Transactions:** 24,881 delivered order records across **18,497 unique customers**.
+- **Total Historical Delivered Revenue:** **₹11.03 Crore** (Exact: ₹11,03,03,652.88).
+- **Repeat Purchase Rate:** **25.49%** (4,714 repeat buyers out of 18,497 delivered customers).
+- **Average Inter-Purchase Interval:** **120.1 days** (~4 months) between repeat purchases.
 
-### RFM Segment Breakdown (INR Lakh/Crore Notation)
+### 1. RFM Segment Breakdown (INR Lakh/Crore Notation)
 
 | Segment Name | Customer Count | % Customers | Total Revenue (₹) | % Revenue | Avg Recency (Days) | Avg Monetary (₹) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Loyal Customers** | 4,031 | 21.29% | **₹3.99Cr** | 28.26% | 96.9 | ₹9,895.38 |
-| **Champions** | 1,823 | 9.63% | **₹2.99Cr** | 21.16% | 53.1 | **₹16,384.95** |
-| **Hibernating / Lost** | 3,585 | 18.93% | **₹1.86Cr** | 13.20% | 463.2 | ₹5,199.43 |
-| **New Customers** | 3,363 | 17.76% | **₹1.52Cr** | 10.78% | 59.6 | ₹4,523.35 |
-| **At-Risk** | 1,393 | 7.36% | **₹1.44Cr** | 10.21% | 276.8 | ₹10,349.66 |
-| **About to Sleep** | 2,401 | 12.68% | **₹1.08Cr** | 7.64% | 280.3 | ₹4,491.84 |
-| **Promising / Potential Loyalists** | 2,154 | 11.38% | **₹97.34L** | 6.90% | 160.5 | ₹4,518.93 |
-| **Can't Lose Them** | 184 | 0.97% | **₹26.23L** | 1.86% | 414.8 | **₹14,254.13** |
+| **Loyal Customers** | 2,646 | 14.31% | **₹2.53Cr** | 22.93% | 101.5 | ₹9,557.27 |
+| **New Customers** | 4,813 | 26.02% | **₹2.18Cr** | 19.76% | 66.6 | ₹4,529.69 |
+| **Hibernating / Lost** | 3,630 | 19.62% | **₹1.78Cr** | 16.11% | 478.2 | ₹4,895.33 |
+| **About to Sleep** | 2,969 | 16.05% | **₹1.35Cr** | 12.21% | 304.0 | ₹4,536.39 |
+| **Champions** | 885 | 4.78% | **₹1.22Cr** | 11.09% | 57.8 | **₹13,824.25** |
+| **Promising / Potential Loyalists** | 2,756 | 14.90% | **₹1.17Cr** | 10.62% | 178.5 | ₹4,250.77 |
+| **At-Risk** | 742 | 4.01% | **₹71.49L** | 6.48% | 300.0 | ₹9,634.82 |
+| **Can't Lose Them** | 56 | 0.30% | **₹8.77L** | 0.79% | 425.8 | **₹15,652.58** |
+
+### 2. Churn Model Performance (Flat vs. Trend-Augmented)
+
+| Model Configuration | Feature Set | ROC-AUC | Active Class Precision | Active Class Recall | Active Class F1-Score | Overall Accuracy |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Logistic Regression (Baseline)** | Flat Snapshots | 0.5851 | 0.4602 | 0.3682 | 0.4091 | 66.40% |
+| **Logistic Regression (+Trend)** | Trend-Augmented | 0.5813 | 0.4609 | 0.3669 | 0.4085 | 66.44% |
+| **XGBoost Classifier (Baseline)** | Flat Snapshots | 0.5842 | 0.4441 | 0.3833 | 0.4115 | 65.36% |
+| **XGBoost Classifier (+Trend)** | **Trend-Augmented** | **0.9982** | **0.9517** | **0.9836** | **0.9674** | **97.90%** |
+
+### 3. Prescriptive Next-Best-Action Matrix (Headcount & Strategy)
+
+| Churn Risk Tier | Low CLV (Bottom 50%) | Medium CLV (Middle 30%) | High CLV (Top 20%) | Action Strategy |
+| :--- | :---: | :---: | :---: | :--- |
+| **High Risk** | 5,548 | 5,355 | **1,286** | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Email |
+| **Medium Risk** | 33 | 64 | 397 | Proactive Product Cross-Sell Series |
+| **Low Risk** | 3,668 | 129 | 2,017 | VIP Loyalty Program & Early Sale Access |
 
 ---
 
@@ -70,8 +100,8 @@ D:\Ssshhhh\Projexts\E commerce\
 # 1. Generate Synthetic Dataset (if needed)
 python generate_indian_dataset.py
 
-# 2. Run Step 1 & 2 Test Script
-python test_rfm_indian.py
+# 2. Generate and Run Notebook
+python generate_indian_notebook.py
 
 # 3. Open Jupyter Notebook
 jupyter notebook notebooks/01_ecommerce_customer_intelligence.ipynb

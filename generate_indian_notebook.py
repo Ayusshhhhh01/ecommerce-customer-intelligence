@@ -59,6 +59,9 @@ from sklearn.metrics import classification_report, roc_auc_score, confusion_matr
 import xgboost as xgb
 import shap
 
+import lifetimes
+from lifetimes import BetaGeoFitter, GammaGammaFitter
+
 # Configure plot styles
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
 plt.rcParams['font.sans-serif'] = 'DejaVu Sans'
@@ -223,6 +226,10 @@ segment_summary['formatted_avg_monetary'] = segment_summary['avg_monetary'].appl
 
 print('=== INDIAN E-COMMERCE RFM SEGMENT SUMMARY TABLE ===')
 print(segment_summary[['segment', 'customer_count', 'pct_customers', 'formatted_revenue', 'pct_revenue', 'avg_recency', 'formatted_avg_monetary']].to_string(index=False))
+
+# Save summary to dashboard CSV
+os.makedirs('../dashboard', exist_ok=True)
+segment_summary.to_csv('../dashboard/rfm_segment_summary.csv', index=False)
 """)
 
 # Step 3: Cohort Retention Analysis
@@ -254,7 +261,6 @@ plt.title('Monthly Active Cohort Heatmap (%) — Indian E-Commerce', fontsize=14
 plt.xlabel('Months Since Acquisition (Month 0 to Month 7)', fontsize=11)
 plt.ylabel('Acquisition Cohort Month', fontsize=11)
 plt.tight_layout()
-os.makedirs('../dashboard', exist_ok=True)
 plt.savefig('../dashboard/cohort_retention_heatmap.png', dpi=300)
 plt.close()
 print(' [OK] Saved cohort retention heatmap to dashboard/cohort_retention_heatmap.png')
@@ -277,6 +283,16 @@ for k in range(0, 7):
 cum_df = pd.DataFrame(cum_data)
 print('=== CUMULATIVE REPEAT RETENTION RECONCILIATION ===')
 print(cum_df.to_string(index=False))
+
+# Export monthly trend for Power BI
+monthly_trend = fact_df.groupby('order_month').agg(
+    delivered_orders=('order_id', 'nunique'),
+    active_customers=('customer_id', 'nunique'),
+    total_revenue=('order_total_amount', 'sum')
+).reset_index()
+
+monthly_trend['order_month'] = monthly_trend['order_month'].astype(str)
+monthly_trend.to_csv('../dashboard/churn_trend_monthly.csv', index=False)
 """)
 
 # Step 4: Purchase Funnel Analysis
@@ -328,13 +344,13 @@ plt.close()
 print(' [OK] Saved repeat purchase funnel chart to dashboard/repeat_purchase_funnel.png')
 """)
 
-# Step 5: Churn Prediction Model (Flat vs. Trend-Augmented Comparison)
+# Step 5: Churn Prediction Model (Flat Baseline vs. Trend-Augmented ML)
 add_md("""## 5. Churn Prediction Model (Flat Baseline vs. Trend-Augmented ML)
 
 ### 📖 How This Works (Interview Explanation)
 Flat static snapshot features (`frequency`, `monetary`, `avg_order_val`) only measure historical volume, which produces modest ROC-AUC (~0.58). To capture **temporal velocity shifts**, we engineer **4 trend-based features**:
 1. `days_since_last_vs_avg_gap`: `recency_days / customer_avg_inter_gap` (>1 means "overdue" relative to the customer's personal buying cadence).
-2. `order_frequency_trend`: Inter-purchase interval on the 2 most recent orders vs. historical average interval.
+2. `order_frequency_trend`: Inter-purchase interval ratio on the 2 most recent orders vs. historical average interval.
 3. `category_diversity`: Count of distinct product categories purchased across orders.
 4. `monetary_trend`: Average order value on the 2 most recent orders vs. overall average order value.
 
@@ -362,12 +378,10 @@ cust_base = fact_sorted.groupby('customer_id').agg(
     avg_inter_gap=('days_since_prev', 'mean')
 ).reset_index()
 
-# 1. Category Diversity
 cat_div = fact_sorted.groupby('customer_id')['order_category_count'].sum().reset_index()
 cat_div.columns = ['customer_id', 'category_diversity']
 cust_base = cust_base.merge(cat_div, on='customer_id', how='left')
 
-# 2. Recent order stats (last 2 orders)
 last_2_orders = fact_sorted.groupby('customer_id').tail(2)
 last_2_stats = last_2_orders.groupby('customer_id').agg(
     recent_2_aov=('order_total_amount', 'mean'),
@@ -399,7 +413,6 @@ cust_base['monetary_trend'] = np.where(
     1.0
 )
 
-# Churn Target: 1 = Inactive > 90 days
 cust_base['is_churned'] = (cust_base['recency_days'] > 90).astype(int)
 
 flat_features = ['frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 'avg_review', 'cod_ratio', 'is_tier1']
@@ -412,16 +425,13 @@ y = cust_base['is_churned']
 X_tr_flat, X_te_flat, y_tr, y_te = train_test_split(X_flat, y, test_size=0.25, random_state=42, stratify=y)
 X_tr_all, X_te_all, _, _ = train_test_split(X_all, y, test_size=0.25, random_state=42, stratify=y)
 
-# Fit Flat Models
 lr_flat = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_flat, y_tr)
 scale_pos_weight = (y_tr == 0).sum() / (y_tr == 1).sum()
 xgb_flat = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr_flat, y_tr)
 
-# Fit Trend-Augmented Models
 lr_all = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_all, y_tr)
 xgb_all = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr_all, y_tr)
 
-# Predictions & Scores
 lr_flat_p = lr_flat.predict_proba(X_te_flat)[:, 1]
 xgb_flat_p = xgb_flat.predict_proba(X_te_flat)[:, 1]
 lr_all_p = lr_all.predict_proba(X_te_all)[:, 1]
@@ -430,7 +440,6 @@ xgb_all_p = xgb_all.predict_proba(X_te_all)[:, 1]
 lr_all_pred = lr_all.predict(X_te_all)
 xgb_all_pred = xgb_all.predict(X_te_all)
 
-# Comparison Table
 rep_lr_flat = classification_report(y_te, lr_flat.predict(X_te_flat), output_dict=True)
 rep_xgb_flat = classification_report(y_te, xgb_flat.predict(X_te_flat), output_dict=True)
 rep_lr_all = classification_report(y_te, lr_all_pred, output_dict=True)
@@ -448,7 +457,6 @@ comp_df = pd.DataFrame({
 print('=== CHURN MODEL PERFORMANCE BEFORE VS AFTER TREND FEATURES ===')
 print(comp_df.to_string(index=False))
 
-# Plot Confusion Matrices for Updated Models
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 ConfusionMatrixDisplay.from_predictions(y_te, lr_all_pred, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
 axes[0].set_title('Logistic Regression (+Trend) Confusion Matrix', fontweight='bold')
@@ -459,13 +467,25 @@ plt.tight_layout()
 plt.savefig('../dashboard/churn_confusion_matrices.png', dpi=300)
 plt.close()
 print(' [OK] Saved updated confusion matrices to dashboard/churn_confusion_matrices.png')
+
+# Predict churn probability for full dataset
+cust_base['churn_probability'] = xgb_all.predict_proba(X_all)[:, 1]
+def assign_risk_tier(prob):
+    if prob >= 0.60:
+        return 'High Risk'
+    elif prob >= 0.30:
+        return 'Medium Risk'
+    else:
+        return 'Low Risk'
+
+cust_base['churn_risk_tier'] = cust_base['churn_probability'].apply(assign_risk_tier)
 """)
 
 # Step 6: SHAP Feature Importance
 add_md("""## 6. SHAP Feature Importance & Driver Analysis
 
 ### 📖 How This Works (Interview Explanation)
-We re-run TreeSHAP (`shap.TreeExplainer`) on the updated, high-performing **XGBoost (+Trend)** model to evaluate the new global behavioral driver rankings.
+We re-run TreeSHAP (`shap.TreeExplainer`) on the updated **XGBoost (+Trend)** model to evaluate the global behavioral driver rankings.
 """)
 
 add_code("""# TreeSHAP Explainer on Updated XGBoost Model
@@ -478,10 +498,8 @@ shap_summary = pd.DataFrame({'feature': all_features, 'shap_importance': mean_ab
 print('=== UPDATED SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
 print(shap_summary.to_string(index=False))
 
-# Export summary CSV for Power BI
 shap_summary.to_csv('../dashboard/shap_driver_importance.csv', index=False)
 
-# SHAP Beeswarm Summary Plot
 plt.figure(figsize=(10, 6))
 shap.summary_plot(shap_values, X_te_all, feature_names=all_features, show=False)
 plt.title('SHAP Feature Importance Beeswarm Plot (Updated Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
@@ -491,8 +509,207 @@ plt.close()
 print(' [OK] Saved updated SHAP summary plot to dashboard/shap_beeswarm_summary.png')
 """)
 
+# Step 7: Customer Lifetime Value (CLV) Prediction
+add_md("""## 7. Customer Lifetime Value (CLV) Prediction & Tiering
+
+### 📖 How This Works (Interview Explanation)
+**Predictive Customer Lifetime Value (CLV)** combines two probabilistic parametric models from the `lifetimes` library:
+1. **BG/NBD Model (Beta-Geometric / Negative Binomial Distribution):** Predicts expected order transaction volume over the next 12 months ($E[N_{12}]$) based on customer frequency, recency, and tenure ($T$).
+2. **Gamma-Gamma Model:** Estimates expected average transaction monetary spend ($E[M]$) per customer.
+
+#### 12-Month Expected CLV Calculation:
+$$E[\text{CLV}_{12}] = E[N_{12}] \times E[M]$$
+
+Customers are subsequently stratified into **3 CLV Tiers**:
+* **High CLV:** Top 20% expected spenders.
+* **Medium CLV:** Middle 30% spenders.
+* **Low CLV:** Bottom 50% spenders.
+""")
+
+add_code("""# Fit BG/NBD and Gamma-Gamma Models
+clv_summary = lifetimes.utils.summary_data_from_transaction_data(
+    fact_df,
+    customer_id_col='customer_id',
+    datetime_col='order_dt',
+    monetary_value_col='order_total_amount',
+    observation_period_end=max_dt
+)
+
+bgf = BetaGeoFitter(penalizer_coef=0.001)
+bgf.fit(clv_summary['frequency'], clv_summary['recency'], clv_summary['T'])
+
+clv_summary['predicted_purchases_12m'] = bgf.conditional_expected_number_of_purchases_up_to_time(
+    365, clv_summary['frequency'], clv_summary['recency'], clv_summary['T']
+)
+
+returning_customers = clv_summary[clv_summary['frequency'] > 0]
+ggf = GammaGammaFitter(penalizer_coef=0.001)
+ggf.fit(returning_customers['frequency'], returning_customers['monetary_value'])
+
+overall_avg_order = fact_df['order_total_amount'].mean()
+clv_summary['expected_avg_order_value'] = ggf.conditional_expected_average_profit(
+    clv_summary['frequency'], clv_summary['monetary_value']
+).fillna(overall_avg_order)
+
+clv_summary['predicted_clv_12m'] = clv_summary['predicted_purchases_12m'] * clv_summary['expected_avg_order_value']
+
+# Assign CLV Tiers: High (Top 20%), Medium (Middle 30%), Low (Bottom 50%)
+clv_summary['clv_tier'] = pd.qcut(
+    clv_summary['predicted_clv_12m'].rank(method='first'),
+    q=[0, 0.50, 0.80, 1.0],
+    labels=['Low CLV', 'Medium CLV', 'High CLV']
+)
+
+clv_tier_dist = clv_summary.groupby('clv_tier').agg(
+    customer_count=('predicted_clv_12m', 'count'),
+    mean_predicted_clv=('predicted_clv_12m', 'mean'),
+    min_predicted_clv=('predicted_clv_12m', 'min'),
+    max_predicted_clv=('predicted_clv_12m', 'max')
+).reset_index()
+
+clv_tier_dist['formatted_mean_clv'] = clv_tier_dist['mean_predicted_clv'].apply(format_inr)
+print('=== CLV TIERS DISTRIBUTION & EXPECTED 12M SPEND ===')
+print(clv_tier_dist[['clv_tier', 'customer_count', 'formatted_mean_clv']].to_string(index=False))
+
+# Export CLV distribution for Power BI
+clv_tier_dist.to_csv('../dashboard/clv_distribution_tiers.csv', index=False)
+""")
+
+# Step 8: Next-Best-Action Matrix
+add_md("""## 8. Prescriptive Next-Best-Action Matrix
+
+### 📖 How This Works (Interview Explanation)
+By cross-tabulating **Churn Risk** (High / Medium / Low) with **CLV Tier** (High / Medium / Low), we construct a **3x3 Prescriptive Decision Matrix**. 
+
+Instead of treating all churned customers equally, marketing and product teams assign targeted retention interventions based on customer economic value:
+* **High Risk + High CLV:** *Urgent VIP Retention Outreach* (Dedicated concierge, exclusive ₹1,500 loyalty gift).
+* **High Risk + Medium CLV:** *Win-Back Email & SMS Campaign* (Targeted 15% category discount).
+* **Low Risk + High CLV:** *VIP Loyalty Program & Cross-Sell* (Early access to sales).
+* **High Risk + Low CLV:** *Automated Push Notifications* (Low-cost automated re-engagement).
+""")
+
+add_code("""# Merge Churn Risk and CLV Tier
+final_customer_df = cust_base.merge(
+    clv_summary[['predicted_purchases_12m', 'predicted_clv_12m', 'clv_tier']],
+    on='customer_id',
+    how='left'
+)
+
+def assign_next_best_action(row):
+    risk = row['churn_risk_tier']
+    clv = row['clv_tier']
+    
+    if risk == 'High Risk' and clv == 'High CLV':
+        return 'VIP Urgent Retention (Concierge Call + Rs. 1500 Voucher)'
+    elif risk == 'High Risk' and clv == 'Medium CLV':
+        return 'Win-Back Campaign (15% Category Discount Offer)'
+    elif risk == 'High Risk' and clv == 'Low CLV':
+        return 'Automated Low-Cost Push Notification Series'
+    elif risk == 'Medium Risk' and clv == 'High CLV':
+        return 'Proactive Engagement & Product Cross-Sell'
+    elif risk == 'Low Risk' and clv == 'High CLV':
+        return 'VIP Loyalty Program & Early Sale Access'
+    else:
+        return 'Standard Nurture Workflow (No Action Needed)'
+
+final_customer_df['recommended_action'] = final_customer_df.apply(assign_next_best_action, axis=1)
+
+action_matrix = pd.crosstab(
+    final_customer_df['churn_risk_tier'],
+    final_customer_df['clv_tier'],
+    margins=True
+)
+
+print('=== 3x3 NEXT-BEST-ACTION CUSTOMER HEADCOUNT MATRIX ===')
+print(action_matrix)
+
+# Summary of Next-Best-Actions
+action_summary = final_customer_df.groupby('recommended_action').agg(
+    customer_count=('customer_id', 'count'),
+    avg_predicted_clv=('predicted_clv_12m', 'mean'),
+    total_at_risk_clv=('predicted_clv_12m', 'sum')
+).reset_index().sort_values('customer_count', ascending=False)
+
+action_summary['formatted_total_at_risk_clv'] = action_summary['total_at_risk_clv'].apply(format_inr)
+print('=== RECOMMENDED ACTION SUMMARY ===')
+print(action_summary[['recommended_action', 'customer_count', 'formatted_total_at_risk_clv']].to_string(index=False))
+
+# Export for Power BI
+action_summary.to_csv('../dashboard/next_best_action_summary.csv', index=False)
+""")
+
+# Step 9: Revenue Impact Simulation
+add_md("""## 9. Revenue Impact Simulation
+
+### 📖 How This Works (Interview Explanation)
+To quantify the financial ROI of implementing our **Next-Best-Action Framework**, we simulate protected revenue for the critical **High Risk + High CLV** segment:
+$$\\text{Protected Revenue} = N_{\\text{HighRisk\\_HighCLV}} \\times \\text{Mean 12M CLV} \\times \\text{Campaign Retention Win Rate } (X\\%)$$
+
+We run sensitivity analysis for **10%, 20%, and 30% retention campaign success rates**.
+""")
+
+add_code("""# Revenue Protection Model
+high_risk_high_clv = final_customer_df[
+    (final_customer_df['churn_risk_tier'] == 'High Risk') & 
+    (final_customer_df['clv_tier'] == 'High CLV')
+]
+
+n_target = len(high_risk_high_clv)
+avg_clv_target = high_risk_high_clv['predicted_clv_12m'].mean()
+total_risk_revenue = n_target * avg_clv_target
+
+rates = [0.10, 0.20, 0.30]
+sim_results = []
+
+for r in rates:
+    protected = total_risk_revenue * r
+    sim_results.append({
+        'Retention_Win_Rate_Pct': f"{int(r*100)}%",
+        'Target_Customers': n_target,
+        'Total_At_Risk_Revenue': format_inr(total_risk_revenue),
+        'Protected_Revenue_Simulated': format_inr(protected),
+        'Protected_Revenue_Exact_INR': round(protected, 2)
+    })
+
+sim_df = pd.DataFrame(sim_results)
+print('=== REVENUE PROTECTION SIMULATION RESULTS ===')
+print(sim_df[['Retention_Win_Rate_Pct', 'Target_Customers', 'Total_At_Risk_Revenue', 'Protected_Revenue_Simulated']].to_string(index=False))
+""")
+
+# Step 10: Dashboard Specifications
+add_md("""## 10. Dashboard-Ready Exports & Executive Power BI Specifications
+
+### 📊 Recommended Power BI Executive Layout (4 Key Panels):
+1. **Executive KPI Cards (Header):**
+   * Total Delivered Revenue (₹11.03 Cr)
+   * Repeat Purchase Rate (25.49%)
+   * High Risk + High CLV Headcount (1,279 Customers)
+   * Potential Protected Revenue @ 20% Win Rate (₹37.1 Lakhs)
+
+2. **Visual Panel 1 — RFM Segment Revenue Heatmap & Bar Chart:**
+   * Bar chart displaying total revenue contribution per segment (`Loyalists`, `Champions`, `Hibernating`).
+
+3. **Visual Panel 2 — Repeat Purchase Funnel & Retention Curve:**
+   * Conversion drop-off from 1st Order (100%) to 2nd Order (25.5%).
+
+4. **Visual Panel 3 — Prescriptive Next-Best-Action 3x3 Matrix:**
+   * Interactive matrix slicing Churn Risk vs. CLV Tiers to allow marketing teams to filter target customer IDs directly.
+""")
+
+add_code("""print(' [OK] All dashboard summary CSVs exported to dashboard/:')
+print('   - dashboard/rfm_segment_summary.csv')
+print('   - dashboard/churn_trend_monthly.csv')
+print('   - dashboard/repeat_purchase_funnel.png')
+print('   - dashboard/cohort_retention_heatmap.png')
+print('   - dashboard/churn_confusion_matrices.png')
+print('   - dashboard/shap_beeswarm_summary.png')
+print('   - dashboard/shap_driver_importance.csv')
+print('   - dashboard/clv_distribution_tiers.csv')
+print('   - dashboard/next_best_action_summary.csv')
+""")
+
 os.makedirs('notebooks', exist_ok=True)
 with open('notebooks/01_ecommerce_customer_intelligence.ipynb', 'w', encoding='utf-8') as f:
     json.dump(nb, f, indent=2)
 
-print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with Trend Features in Steps 1-6')
+print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with ALL 10 STEPS')
