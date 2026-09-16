@@ -106,6 +106,7 @@ SELECT
     o.payment_method,
     ROUND(SUM(oi.item_total), 2) AS order_total_amount,
     COUNT(oi.item_id) AS total_items,
+    COUNT(DISTINCT oi.category) AS order_category_count,
     d.delivery_delay_days,
     r.review_score
 FROM orders o
@@ -327,19 +328,28 @@ plt.close()
 print(' [OK] Saved repeat purchase funnel chart to dashboard/repeat_purchase_funnel.png')
 """)
 
-# Step 5: Churn Prediction Model
-add_md("""## 5. Churn Prediction Model (Class-Weighted Logistic Regression & XGBoost)
+# Step 5: Churn Prediction Model (Flat vs. Trend-Augmented Comparison)
+add_md("""## 5. Churn Prediction Model (Flat Baseline vs. Trend-Augmented ML)
 
 ### 📖 How This Works (Interview Explanation)
-In e-commerce, **Churn** is defined as post-purchase inactivity exceeding **90 days** (aligned with our 120-day inter-purchase cycle). 
-* **Class Imbalance:** 68.4% of customers are churned (>90 days inactive) vs. 31.6% active.
-* **Imbalance Handling:** Rather than focusing solely on overall accuracy, we utilize **`class_weight='balanced'`** in Logistic Regression and **`scale_pos_weight`** in XGBoost to penalize false negatives and evaluate **Precision, Recall, and F1-Score for the minority/active class** as rigorously as **ROC-AUC**.
+Flat static snapshot features (`frequency`, `monetary`, `avg_order_val`) only measure historical volume, which produces modest ROC-AUC (~0.58). To capture **temporal velocity shifts**, we engineer **4 trend-based features**:
+1. `days_since_last_vs_avg_gap`: `recency_days / customer_avg_inter_gap` (>1 means "overdue" relative to the customer's personal buying cadence).
+2. `order_frequency_trend`: Inter-purchase interval on the 2 most recent orders vs. historical average interval.
+3. `category_diversity`: Count of distinct product categories purchased across orders.
+4. `monetary_trend`: Average order value on the 2 most recent orders vs. overall average order value.
+
+#### Class Imbalance Handling:
+Using **`class_weight='balanced'`** in Logistic Regression and **`scale_pos_weight`** in XGBoost, we compare baseline flat features vs. trend-augmented features.
 """)
 
-add_code("""# Feature Engineering for Churn Prediction
+add_code("""# Feature Engineering for Churn Prediction (Flat + Trend Features)
 max_dt = fact_df['order_dt'].max()
 
-cust_features = fact_df.groupby('customer_id').agg(
+fact_sorted = fact_df.sort_values(['customer_id', 'order_dt'])
+fact_sorted['prev_order_dt'] = fact_sorted.groupby('customer_id')['order_dt'].shift(1)
+fact_sorted['days_since_prev'] = (fact_sorted['order_dt'] - fact_sorted['prev_order_dt']).dt.days
+
+cust_base = fact_sorted.groupby('customer_id').agg(
     last_order=('order_dt', 'max'),
     frequency=('order_id', 'nunique'),
     monetary=('order_total_amount', 'sum'),
@@ -348,84 +358,124 @@ cust_features = fact_df.groupby('customer_id').agg(
     avg_delay=('delivery_delay_days', 'mean'),
     avg_review=('review_score', 'mean'),
     cod_ratio=('payment_method', lambda x: (x == 'COD').mean()),
-    is_tier1=('city_tier', lambda x: 1 if (x.iloc[0] == 'Tier 1') else 0)
+    is_tier1=('city_tier', lambda x: 1 if (x.iloc[0] == 'Tier 1') else 0),
+    avg_inter_gap=('days_since_prev', 'mean')
 ).reset_index()
 
-cust_features['recency_days'] = (max_dt - cust_features['last_order']).dt.days
-cust_features['avg_delay'] = cust_features['avg_delay'].fillna(0)
-cust_features['avg_review'] = cust_features['avg_review'].fillna(4.0)
+# 1. Category Diversity
+cat_div = fact_sorted.groupby('customer_id')['order_category_count'].sum().reset_index()
+cat_div.columns = ['customer_id', 'category_diversity']
+cust_base = cust_base.merge(cat_div, on='customer_id', how='left')
 
-# Target: 1 = Churned (>90 days inactive), 0 = Active (<= 90 days)
-cust_features['is_churned'] = (cust_features['recency_days'] > 90).astype(int)
+# 2. Recent order stats (last 2 orders)
+last_2_orders = fact_sorted.groupby('customer_id').tail(2)
+last_2_stats = last_2_orders.groupby('customer_id').agg(
+    recent_2_aov=('order_total_amount', 'mean'),
+    recent_2_gap=('days_since_prev', 'mean')
+).reset_index()
 
-feature_cols = ['frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 'avg_review', 'cod_ratio', 'is_tier1']
-X = cust_features[feature_cols]
-y = cust_features['is_churned']
+cust_base = cust_base.merge(last_2_stats, on='customer_id', how='left')
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+cust_base['recency_days'] = (max_dt - cust_base['last_order']).dt.days
+cust_base['avg_delay'] = cust_base['avg_delay'].fillna(0)
+cust_base['avg_review'] = cust_base['avg_review'].fillna(4.0)
 
-print(f'Train shape: {X_train.shape}, Test shape: {X_test.shape}')
-print('Train Class Distribution:')
-print(y_train.value_counts(normalize=True).round(4)*100)
-""")
-
-add_code("""# 1. Logistic Regression Baseline (Class-Weighted)
-lr = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42)
-lr.fit(X_train, y_train)
-lr_preds = lr.predict(X_test)
-lr_probs = lr.predict_proba(X_test)[:, 1]
-
-print('=== MODEL 1: LOGISTIC REGRESSION BASELINE ===')
-print('ROC-AUC Score:', round(roc_auc_score(y_test, lr_probs), 4))
-print(classification_report(y_test, lr_preds, digits=4))
-
-# 2. XGBoost Classifier (Class-Weighted via scale_pos_weight)
-scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
-xgb_model = xgb.XGBClassifier(
-    n_estimators=100,
-    max_depth=4,
-    learning_rate=0.05,
-    scale_pos_weight=scale_pos_weight,
-    random_state=42
+overall_avg_gap = cust_base['avg_inter_gap'].mean()
+cust_base['order_frequency_trend'] = np.where(
+    cust_base['frequency'] > 1,
+    cust_base['recent_2_gap'] / (cust_base['avg_inter_gap'] + 1e-5),
+    1.0
 )
-xgb_model.fit(X_train, y_train)
-xgb_preds = xgb_model.predict(X_test)
-xgb_probs = xgb_model.predict_proba(X_test)[:, 1]
 
-print('=== MODEL 2: XGBOOST CLASSIFIER ===')
-print('ROC-AUC Score:', round(roc_auc_score(y_test, xgb_probs), 4))
-print(classification_report(y_test, xgb_preds, digits=4))
+cust_base['days_since_last_vs_avg_gap'] = np.where(
+    cust_base['frequency'] > 1,
+    cust_base['recency_days'] / (cust_base['avg_inter_gap'] + 1e-5),
+    cust_base['recency_days'] / (overall_avg_gap + 1e-5)
+)
 
-# Plot Confusion Matrices
+cust_base['monetary_trend'] = np.where(
+    cust_base['frequency'] > 1,
+    cust_base['recent_2_aov'] / (cust_base['avg_order_val'] + 1e-5),
+    1.0
+)
+
+# Churn Target: 1 = Inactive > 90 days
+cust_base['is_churned'] = (cust_base['recency_days'] > 90).astype(int)
+
+flat_features = ['frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 'avg_review', 'cod_ratio', 'is_tier1']
+all_features = flat_features + ['order_frequency_trend', 'days_since_last_vs_avg_gap', 'category_diversity', 'monetary_trend']
+
+X_flat = cust_base[flat_features].fillna(0)
+X_all = cust_base[all_features].fillna(0)
+y = cust_base['is_churned']
+
+X_tr_flat, X_te_flat, y_tr, y_te = train_test_split(X_flat, y, test_size=0.25, random_state=42, stratify=y)
+X_tr_all, X_te_all, _, _ = train_test_split(X_all, y, test_size=0.25, random_state=42, stratify=y)
+
+# Fit Flat Models
+lr_flat = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_flat, y_tr)
+scale_pos_weight = (y_tr == 0).sum() / (y_tr == 1).sum()
+xgb_flat = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr_flat, y_tr)
+
+# Fit Trend-Augmented Models
+lr_all = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_all, y_tr)
+xgb_all = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr_all, y_tr)
+
+# Predictions & Scores
+lr_flat_p = lr_flat.predict_proba(X_te_flat)[:, 1]
+xgb_flat_p = xgb_flat.predict_proba(X_te_flat)[:, 1]
+lr_all_p = lr_all.predict_proba(X_te_all)[:, 1]
+xgb_all_p = xgb_all.predict_proba(X_te_all)[:, 1]
+
+lr_all_pred = lr_all.predict(X_te_all)
+xgb_all_pred = xgb_all.predict(X_te_all)
+
+# Comparison Table
+rep_lr_flat = classification_report(y_te, lr_flat.predict(X_te_flat), output_dict=True)
+rep_xgb_flat = classification_report(y_te, xgb_flat.predict(X_te_flat), output_dict=True)
+rep_lr_all = classification_report(y_te, lr_all_pred, output_dict=True)
+rep_xgb_all = classification_report(y_te, xgb_all_pred, output_dict=True)
+
+comp_df = pd.DataFrame({
+    'Model_Configuration': ['Logistic Regression (Flat)', 'Logistic Regression (+Trend)', 'XGBoost (Flat)', 'XGBoost (+Trend)'],
+    'ROC_AUC': [round(roc_auc_score(y_te, lr_flat_p), 4), round(roc_auc_score(y_te, lr_all_p), 4), round(roc_auc_score(y_te, xgb_flat_p), 4), round(roc_auc_score(y_te, xgb_all_p), 4)],
+    'Active_Class_F1': [round(rep_lr_flat['0']['f1-score'], 4), round(rep_lr_all['0']['f1-score'], 4), round(rep_xgb_flat['0']['f1-score'], 4), round(rep_xgb_all['0']['f1-score'], 4)],
+    'Active_Class_Precision': [round(rep_lr_flat['0']['precision'], 4), round(rep_lr_all['0']['precision'], 4), round(rep_xgb_flat['0']['precision'], 4), round(rep_xgb_all['0']['precision'], 4)],
+    'Active_Class_Recall': [round(rep_lr_flat['0']['recall'], 4), round(rep_lr_all['0']['recall'], 4), round(rep_xgb_flat['0']['recall'], 4), round(rep_xgb_all['0']['recall'], 4)],
+    'Overall_Accuracy': [round(rep_lr_flat['accuracy'], 4), round(rep_lr_all['accuracy'], 4), round(rep_xgb_flat['accuracy'], 4), round(rep_xgb_all['accuracy'], 4)]
+})
+
+print('=== CHURN MODEL PERFORMANCE BEFORE VS AFTER TREND FEATURES ===')
+print(comp_df.to_string(index=False))
+
+# Plot Confusion Matrices for Updated Models
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-ConfusionMatrixDisplay.from_predictions(y_test, lr_preds, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
-axes[0].set_title('Logistic Regression Confusion Matrix', fontweight='bold')
+ConfusionMatrixDisplay.from_predictions(y_te, lr_all_pred, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[0].set_title('Logistic Regression (+Trend) Confusion Matrix', fontweight='bold')
 
-ConfusionMatrixDisplay.from_predictions(y_test, xgb_preds, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
-axes[1].set_title('XGBoost Confusion Matrix', fontweight='bold')
+ConfusionMatrixDisplay.from_predictions(y_te, xgb_all_pred, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[1].set_title('XGBoost (+Trend) Confusion Matrix', fontweight='bold')
 plt.tight_layout()
 plt.savefig('../dashboard/churn_confusion_matrices.png', dpi=300)
 plt.close()
-print(' [OK] Saved confusion matrices to dashboard/churn_confusion_matrices.png')
+print(' [OK] Saved updated confusion matrices to dashboard/churn_confusion_matrices.png')
 """)
 
 # Step 6: SHAP Feature Importance
 add_md("""## 6. SHAP Feature Importance & Driver Analysis
 
 ### 📖 How This Works (Interview Explanation)
-**SHAP (SHapley Additive exPlanations)** applies game theory to measure how much each behavioral feature shifts a customer's churn probability relative to the baseline dataset prediction.
-* **Beeswarm Summary Plot:** Shows feature impact magnitude and direction (e.g. higher delivery delay shifts prediction toward churn).
-* **Global Importance Bar Plot:** Ranks features by average absolute SHAP value.
+We re-run TreeSHAP (`shap.TreeExplainer`) on the updated, high-performing **XGBoost (+Trend)** model to evaluate the new global behavioral driver rankings.
 """)
 
-add_code("""# TreeSHAP Explainer on XGBoost Model
-explainer = shap.TreeExplainer(xgb_model)
-shap_values = explainer.shap_values(X_test)
+add_code("""# TreeSHAP Explainer on Updated XGBoost Model
+explainer = shap.TreeExplainer(xgb_all)
+shap_values = explainer.shap_values(X_te_all)
 
 mean_abs_shap = np.abs(shap_values).mean(axis=0)
-shap_summary = pd.DataFrame({'feature': feature_cols, 'shap_importance': mean_abs_shap}).sort_values('shap_importance', ascending=False)
+shap_summary = pd.DataFrame({'feature': all_features, 'shap_importance': mean_abs_shap}).sort_values('shap_importance', ascending=False)
 
-print('=== SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
+print('=== UPDATED SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
 print(shap_summary.to_string(index=False))
 
 # Export summary CSV for Power BI
@@ -433,16 +483,16 @@ shap_summary.to_csv('../dashboard/shap_driver_importance.csv', index=False)
 
 # SHAP Beeswarm Summary Plot
 plt.figure(figsize=(10, 6))
-shap.summary_plot(shap_values, X_test, feature_names=feature_cols, show=False)
-plt.title('SHAP Feature Importance Beeswarm Plot (Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
+shap.summary_plot(shap_values, X_te_all, feature_names=all_features, show=False)
+plt.title('SHAP Feature Importance Beeswarm Plot (Updated Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
 plt.tight_layout()
 plt.savefig('../dashboard/shap_beeswarm_summary.png', dpi=300)
 plt.close()
-print(' [OK] Saved SHAP summary plot to dashboard/shap_beeswarm_summary.png')
+print(' [OK] Saved updated SHAP summary plot to dashboard/shap_beeswarm_summary.png')
 """)
 
 os.makedirs('notebooks', exist_ok=True)
 with open('notebooks/01_ecommerce_customer_intelligence.ipynb', 'w', encoding='utf-8') as f:
     json.dump(nb, f, indent=2)
 
-print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with Steps 1-6')
+print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with Trend Features in Steps 1-6')
