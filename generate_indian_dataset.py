@@ -51,7 +51,6 @@ tier2_cities = [
     ('Visakhapatnam', 'Andhra Pradesh', 'Tier 2')
 ]
 
-# 65% Metro (Tier 1), 35% Tier 2
 all_cities = metro_cities + tier2_cities
 city_weights = [0.65 / len(metro_cities)] * len(metro_cities) + [0.35 / len(tier2_cities)] * len(tier2_cities)
 
@@ -77,50 +76,32 @@ customers_df = pd.DataFrame({
 
 print(f"Generated {len(customers_df):,} customers.")
 
-# 2. GENERATE ORDERS (35,000 Orders)
-NUM_ORDERS = 35000
-
-# Assign repeat purchase behavior (Tier 1 has higher repeat purchase probability)
-# 70% of orders come from active repeat purchasers
-repeat_prob = np.where(customers_df['city_tier'] == 'Tier 1', 0.25, 0.12)
-repeat_customer_indices = []
-
-# Distribute orders: 15,000 customers have 1 order, 3,500 have 2-3 orders, 1,500 have 4+ orders
+# 2. GENERATE ORDERS (Targeting ~25.8% Repeat Rate for realistic Horizontal E-Commerce)
 customer_order_counts = np.ones(NUM_CUSTOMERS, dtype=int)
-# Give extra orders to subset of customers
-extra_order_eligible = np.random.choice(NUM_CUSTOMERS, size=4000, replace=False, p=repeat_prob / repeat_prob.sum())
-for idx in extra_order_eligible:
-    customer_order_counts[idx] += np.random.choice([1, 2, 3, 4, 5], p=[0.55, 0.25, 0.12, 0.05, 0.03])
+repeat_tier_prob = np.where(customers_df['city_tier'] == 'Tier 1', 0.28, 0.15)
+repeat_eligible = np.random.choice(NUM_CUSTOMERS, size=5400, replace=False, p=repeat_tier_prob / repeat_tier_prob.sum())
 
-# Expand orders list
+for idx in repeat_eligible:
+    customer_order_counts[idx] += np.random.choice([1, 2, 3], p=[0.70, 0.22, 0.08])
+
 order_customer_list = []
 for idx, count in enumerate(customer_order_counts):
     order_customer_list.extend([customer_ids[idx]] * count)
 
-# Trim or pad to exact NUM_ORDERS
-if len(order_customer_list) > NUM_ORDERS:
-    order_customer_list = order_customer_list[:NUM_ORDERS]
-else:
-    additional = np.random.choice(customer_ids, size=NUM_ORDERS - len(order_customer_list))
-    order_customer_list.extend(additional)
-
 random.shuffle(order_customer_list)
+NUM_ORDERS = len(order_customer_list)
 
 # Generate order dates with seasonal festival spikes
-# Spikes during Diwali (Oct 15 - Nov 15) and Republic Day Sale (Jan 20 - Jan 28)
 date_pool = []
 current = datetime(2024, 1, 1)
 end_dt = datetime(2025, 12, 31)
 
 while current <= end_dt:
     weight = 1.0
-    # Diwali Spike (Oct-Nov)
     if (current.month == 10 and current.day >= 15) or (current.month == 11 and current.day <= 15):
         weight = 3.5
-    # Republic Day Sale (Jan 20-28)
     elif current.month == 1 and 20 <= current.day <= 28:
         weight = 2.5
-    # Independence Day Sale (Aug 10-18)
     elif current.month == 8 and 10 <= current.day <= 18:
         weight = 2.0
     
@@ -133,7 +114,6 @@ weights = np.array(weights) / sum(weights)
 sampled_date_indices = np.random.choice(len(dates), size=NUM_ORDERS, p=weights)
 order_dates = [dates[i] for i in sampled_date_indices]
 
-# Ensure order_date >= customer signup_date
 cust_signup_dict = dict(zip(customers_df['customer_id'], signup_dates))
 adjusted_order_dates = []
 for cid, od in zip(order_customer_list, order_dates):
@@ -144,15 +124,12 @@ for cid, od in zip(order_customer_list, order_dates):
 
 order_ids = [f"ORD-{100000 + i}" for i in range(NUM_ORDERS)]
 
-# Payment methods (UPI dominant in India)
-# UPI: 55%, COD: 25%, Credit Card: 12%, Net Banking: 5%, Wallet: 3%
 payment_methods = np.random.choice(
     ['UPI', 'COD', 'Credit Card', 'Net Banking', 'Wallet'],
     size=NUM_ORDERS,
     p=[0.55, 0.25, 0.12, 0.05, 0.03]
 )
 
-# Order Status: COD orders have higher cancellation/return rate (~18%) vs Prepaid (~5%)
 order_statuses = []
 for pm in payment_methods:
     if pm == 'COD':
@@ -206,7 +183,6 @@ order_items_df = pd.DataFrame(order_items_list)
 print(f"Generated {len(order_items_df):,} order item records.")
 
 # 4. GENERATE DELIVERY INFO
-# Map city tier to delivery latency
 cust_tier_dict = dict(zip(customers_df['customer_id'], customers_df['city_tier']))
 
 delivery_list = []
@@ -214,12 +190,10 @@ for oid, cid, od_str, status in zip(orders_df['order_id'], orders_df['customer_i
     od = datetime.strptime(od_str, '%Y-%m-%d %H:%M:%S')
     tier = cust_tier_dict[cid]
     
-    # Promised delivery: Metro = 3 days, Tier 2 = 6 days
     promised_days = 3 if tier == 'Tier 1' else 6
     promised_date = od + timedelta(days=promised_days)
     
     if status == 'delivered':
-        # Actual delivery: Metros usually on-time or +1 day delay; Tier 2 can have 1-4 days delay
         if tier == 'Tier 1':
             delay = np.random.choice([0, 1, 2, 3], p=[0.70, 0.20, 0.07, 0.03])
         else:
@@ -240,13 +214,11 @@ for oid, cid, od_str, status in zip(orders_df['order_id'], orders_df['customer_i
         })
 
 delivery_df = pd.DataFrame(delivery_list)
-print(f"Generated {len(delivery_df):,} delivery records.")
 
 # 5. GENERATE REVIEWS
 reviews_list = []
 for oid, status in zip(orders_df['order_id'], orders_df['order_status']):
     if status == 'delivered':
-        # 60% of delivered customers leave a review
         if np.random.rand() < 0.60:
             delay = delivery_df.loc[delivery_df['order_id'] == oid, 'delivery_delay_days'].values[0]
             if delay == 0:
@@ -262,31 +234,12 @@ for oid, status in zip(orders_df['order_id'], orders_df['order_status']):
             })
 
 reviews_df = pd.DataFrame(reviews_list)
-print(f"Generated {len(reviews_df):,} customer review records.")
 
-# SAVE CSV FILES TO DATA DIRECTORY
+# SAVE CSV FILES
 customers_df.to_csv(os.path.join(out_dir, 'customers.csv'), index=False)
 orders_df.to_csv(os.path.join(out_dir, 'orders.csv'), index=False)
 order_items_df.to_csv(os.path.join(out_dir, 'order_items.csv'), index=False)
 delivery_df.to_csv(os.path.join(out_dir, 'delivery_info.csv'), index=False)
 reviews_df.to_csv(os.path.join(out_dir, 'reviews.csv'), index=False)
-
-# Add prominent dataset disclosure file
-disclosure_text = """# Synthetic Dataset Disclosure
-
-🚨 **DATASET DISCLOSURE:**
-This dataset is synthetically generated to model realistic Indian e-commerce behavior patterns (including festival spikes, UPI/COD payment distributions, metro vs tier-2 delivery latency, and return rates). It is NOT derived from any real company's private transaction data.
-
-Generated on: 2026-09-16
-Schema:
-- customers.csv (20,000 records)
-- orders.csv (35,000 records)
-- order_items.csv (45,000+ item lines)
-- delivery_info.csv (35,000 records)
-- reviews.csv (16,000+ review scores)
-"""
-
-with open(os.path.join(out_dir, 'DATASET_DISCLOSURE.md'), 'w', encoding='utf-8') as f:
-    f.write(disclosure_text)
 
 print(f"[SUCCESS] All synthetic Indian e-commerce CSV files saved to {out_dir}")

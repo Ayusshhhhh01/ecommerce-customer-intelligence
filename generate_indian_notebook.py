@@ -48,6 +48,15 @@ In Indian e-commerce analytics, customer transactions span multiple operational 
 add_code("""import sqlite3
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Configure plot styles
+plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+plt.rcParams['font.sans-serif'] = 'DejaVu Sans'
+plt.rcParams['axes.edgecolor'] = '#cccccc'
 
 # Helper function to format INR numbers into Lakhs (L) and Crores (Cr)
 def format_inr(amount):
@@ -144,16 +153,6 @@ add_md("""## 2. RFM Segmentation & Revenue Contribution
 1. **Recency (R):** Days since the customer's last order (1–5 scale, 5 = most recent).
 2. **Frequency (F):** Total number of completed orders (1–5 scale based on transaction count).
 3. **Monetary (M):** Total monetary spend in ₹ INR (1–5 scale, 5 = highest spend).
-
-#### Segment Definitions:
-* **Champions:** R ≥ 4, F ≥ 3 (Top recent, high frequency, highest spenders).
-* **Loyal Customers:** R ≥ 3, F ≥ 2 (Reliable repeat buyers).
-* **New Customers:** R ≥ 4, F = 1 (Recent first-time buyers).
-* **Promising / Potential Loyalists:** R = 3, F = 1 (Mid recency first-time buyers).
-* **At-Risk:** R = 2, F ≥ 2 (Repeat buyers who haven't purchased recently).
-* **Can't Lose Them:** R = 1, F ≥ 3 (High-frequency historical buyers who are slipping away).
-* **About to Sleep:** R = 2, F = 1 (Single buyers showing signs of inactivity).
-* **Hibernating / Lost:** R = 1, F = 1 (Dormant single buyers).
 """)
 
 add_code("""# Compute RFM metrics per customer_id
@@ -198,7 +197,6 @@ def assign_segment(row):
 
 rfm['segment'] = rfm.apply(assign_segment, axis=1)
 
-# Summary of RFM Segments with INR Lakh/Crore Formatting
 segment_summary = rfm.groupby('segment').agg(
     customer_count=('customer_id', 'count'),
     total_revenue=('monetary', 'sum'),
@@ -220,8 +218,97 @@ print('=== INDIAN E-COMMERCE RFM SEGMENT SUMMARY TABLE ===')
 print(segment_summary[['segment', 'customer_count', 'pct_customers', 'formatted_revenue', 'pct_revenue', 'avg_recency', 'formatted_avg_monetary']].to_string(index=False))
 """)
 
+# Step 3: Cohort Retention Analysis
+add_md("""## 3. Cohort Retention Analysis
+
+### 📖 How This Works (Interview Explanation)
+**Cohort Retention Analysis** tracks how groups of customers (acquired in the same starting month) continue to purchase over time.
+* **Acquisition Month (Cohort):** Month of the customer's very first order.
+* **Period Index ($M+0, M+1, M+2, \\dots$):** Number of months elapsed since acquisition.
+* **Retention Rate (%):** Percentage of the initial cohort size that returned to make at least one purchase in Month $k$.
+
+This highlights organic retention decay and identifies if certain acquisition cohorts (e.g. Diwali festive sale buyers) exhibit higher long-term stickiness compared to baseline cohorts.
+""")
+
+add_code("""# Cohort Retention Calculation
+fact_df['order_dt'] = pd.to_datetime(fact_df['order_date'])
+fact_df['order_month'] = fact_df['order_dt'].dt.to_period('M')
+fact_df['cohort_month'] = fact_df.groupby('customer_id')['order_dt'].transform('min').dt.to_period('M')
+
+fact_df['period_number'] = (fact_df['order_month'].dt.year - fact_df['cohort_month'].dt.year) * 12 + (fact_df['order_month'].dt.month - fact_df['cohort_month'].dt.month)
+
+cohort_group = fact_df.groupby(['cohort_month', 'period_number'])['customer_id'].nunique().reset_index()
+cohort_pivot = cohort_group.pivot(index='cohort_month', columns='period_number', values='customer_id')
+
+cohort_size = cohort_pivot.iloc[:, 0]
+retention_matrix = cohort_pivot.divide(cohort_size, axis=0) * 100
+
+# Plot Cohort Retention Heatmap
+plt.figure(figsize=(12, 7))
+sns.heatmap(retention_matrix.iloc[:12, :8], annot=True, fmt='.1f', cmap='YlGnBu', vmin=0, vmax=15, cbar_kws={'label': 'Retention Rate (%)'})
+plt.title('Monthly Cohort Retention Heatmap (%) — Indian E-Commerce', fontsize=14, fontweight='bold', pad=15)
+plt.xlabel('Months Since Acquisition (Month 0 to Month 7)', fontsize=11)
+plt.ylabel('Acquisition Cohort Month', fontsize=11)
+plt.tight_layout()
+os.makedirs('../dashboard', exist_ok=True)
+plt.savefig('../dashboard/cohort_retention_heatmap.png', dpi=300)
+plt.show()
+print(' [OK] Saved cohort retention heatmap to dashboard/cohort_retention_heatmap.png')
+""")
+
+# Step 4: Purchase Funnel Analysis
+add_md("""## 4. Repeat Purchase Funnel Analysis
+
+### 📖 How This Works (Interview Explanation)
+While traditional marketing funnels measure *Impressions → Clicks → Add-to-Cart → Purchase*, **Repeat Purchase Funnels** measure post-acquisition milestone progression:
+* **1st Order (100%):** Acquisition baseline.
+* **2nd Order:** Conversion from 1st to 2nd purchase (Key retention friction point).
+* **3rd Order:** Conversion from 2nd to 3rd purchase.
+* **4th+ Order:** Conversion to power user / loyal repeat buyer.
+
+By evaluating conversion rates between milestones, product analysts identify where customer drop-off is highest and focus retention interventions (such as post-first-purchase 30-day coupon workflows) at the exact leak point.
+""")
+
+add_code("""# Repeat Purchase Funnel Progression
+orders_per_customer = fact_df.groupby('customer_id')['order_id'].nunique()
+f1_cust = (orders_per_customer >= 1).sum()
+f2_cust = (orders_per_customer >= 2).sum()
+f3_cust = (orders_per_customer >= 3).sum()
+f4_cust = (orders_per_customer >= 4).sum()
+
+funnel_df = pd.DataFrame({
+    'Stage': ['1st Purchase', '2nd Purchase', '3rd Purchase', '4th+ Purchase'],
+    'Customers': [f1_cust, f2_cust, f3_cust, f4_cust],
+    'Retention_from_Base': [100.0, round(f2_cust/f1_cust*100, 2), round(f3_cust/f1_cust*100, 2), round(f4_cust/f1_cust*100, 2)],
+    'Stage_Conversion_Pct': [100.0, round(f2_cust/f1_cust*100, 2), round(f3_cust/f2_cust*100, 2), round(f4_cust/f3_cust*100, 2)],
+    'Stage_Dropoff_Pct': [0.0, round((1-f2_cust/f1_cust)*100, 2), round((1-f3_cust/f2_cust)*100, 2), round((1-f4_cust/f3_cust)*100, 2)]
+})
+
+print('=== REPEAT PURCHASE FUNNEL METRICS ===')
+print(funnel_df.to_string(index=False))
+
+# Plot Funnel Chart
+fig, ax = plt.subplots(figsize=(10, 5))
+bars = ax.bar(funnel_df['Stage'], funnel_df['Customers'], color=['#2b5c8f', '#3690c0', '#67a9cf', '#02818a'], width=0.55)
+
+for bar, cust, pct in zip(bars, funnel_df['Customers'], funnel_df['Retention_from_Base']):
+    height = bar.get_height()
+    ax.annotate(f"{cust:,} ({pct}%)",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 5), textcoords="offset points",
+                ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+ax.set_title('Repeat Purchase Funnel Progression & Retention Drop-Off', fontsize=13, fontweight='bold', pad=15)
+ax.set_ylabel('Unique Customers', fontsize=11)
+ax.set_ylim(0, f1_cust * 1.15)
+plt.tight_layout()
+plt.savefig('../dashboard/repeat_purchase_funnel.png', dpi=300)
+plt.show()
+print(' [OK] Saved repeat purchase funnel chart to dashboard/repeat_purchase_funnel.png')
+""")
+
 os.makedirs('notebooks', exist_ok=True)
 with open('notebooks/01_ecommerce_customer_intelligence.ipynb', 'w', encoding='utf-8') as f:
     json.dump(nb, f, indent=2)
 
-print('[SUCCESS] Successfully generated notebooks/01_ecommerce_customer_intelligence.ipynb')
+print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with Steps 1-4')
