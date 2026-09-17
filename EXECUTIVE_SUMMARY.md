@@ -27,6 +27,10 @@ Acquisition-focused growth without post-purchase retention leads to leaky-bucket
 - **Model Performance:** **XGBoost Classifier Forward ROC-AUC: 0.6220** | **Logistic Regression Forward ROC-AUC: 0.6256**.
 - **Top SHAP Drivers:** City Tier (`is_tier1`: 0.2644), Order Frequency Trend (`order_frequency_trend`: 0.1311), Category Diversity (`category_diversity`: 0.0661), Pre-cutoff Recency (`recency_days_at_T`: 0.0640), and Cadence Variance (`days_since_last_vs_avg_gap`: 0.0520).
 
+### 4. Independence of Churn Risk and Customer Value Tier
+- **Non-Intuitive Risk Distribution:** Churn risk is statistically independent of customer Lifetime Value (CLV). High-CLV customers split almost equally across risk tiers: **1,323 Low Risk (35.8%)**, **1,119 Medium Risk (30.2%)**, and **1,258 High Risk (34.0%)** out of 3,700 top spenders.
+- **The Operational Imperative:** Leadership cannot assume top spenders are safe by default. Without systematic model scoring, **34% of High-CLV customers (1,258 VIPs representing ₹45.40 Lakhs in expected 12-month spend)** would silently drift into dormancy without intervention.
+
 ---
 
 ## 🎯 Prescriptive Next-Best-Action Strategy
