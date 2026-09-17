@@ -93,9 +93,9 @@ D:\Ssshhhh\Projexts\E commerce\
 
 | Churn Risk Tier | Low CLV (Bottom 50%) | Medium CLV (Middle 30%) | High CLV (Top 20%) | Action Strategy | Total Headcount |
 | :--- | :---: | :---: | :---: | :--- | :---: |
-| **High Risk** (Top 33.3%) | 3,643 | 1,928 | **595** | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Offer<br>**Low CLV:** Automated Low-Cost Push Series | **6,166** |
-| **Medium Risk** (Middle 33.3%) | 3,063 | 2,811 | 292 | Proactive Product Cross-Sell & Engagement | **6,166** |
-| **Low Risk** (Bottom 33.3%) | 2,543 | 809 | 2,813 | VIP Loyalty Program & Early Sale Access | **6,165** |
+| **High Risk** (Top 33.3%) | 2,952 | 1,956 | **1,258** | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Offer<br>**Low CLV:** Automated Low-Cost Push Series | **6,166** |
+| **Medium Risk** (Middle 33.3%) | 2,943 | 2,103 | 1,119 | Proactive Product Cross-Sell & Engagement | **6,165** |
+| **Low Risk** (Bottom 33.3%) | 3,354 | 1,489 | 1,323 | VIP Loyalty Program & Early Sale Access | **6,166** |
 | **Total Customer Headcount** | **9,249** | **5,548** | **3,700** | **All Scored Delivered Customers** | **18,497** |
 
 ---

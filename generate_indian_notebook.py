@@ -531,11 +531,19 @@ ggf = GammaGammaFitter(penalizer_coef=0.001)
 ggf.fit(returning_customers['frequency'], returning_customers['monetary_value'])
 
 overall_avg_order = fact_df['order_total_amount'].mean()
-clv_summary['expected_avg_order_value'] = ggf.conditional_expected_average_profit(
+raw_exp_monetary = ggf.conditional_expected_average_profit(
     clv_summary['frequency'], clv_summary['monetary_value']
-).fillna(overall_avg_order)
+)
 
-clv_summary['predicted_clv_12m'] = clv_summary['predicted_purchases_12m'] * clv_summary['expected_avg_order_value']
+# Fix: For single-order customers (frequency == 0), GammaGamma prediction is undefined (q < 1 yields negative values).
+# Assign overall_avg_order for single-order customers and clip predicted_clv_12m at 0.0 minimum.
+clv_summary['expected_avg_order_value'] = np.where(
+    clv_summary['frequency'] > 0,
+    raw_exp_monetary,
+    overall_avg_order
+)
+
+clv_summary['predicted_clv_12m'] = (clv_summary['predicted_purchases_12m'] * clv_summary['expected_avg_order_value']).clip(lower=0.0)
 
 # Assign CLV Tiers: High (Top 20%), Medium (Middle 30%), Low (Bottom 50%)
 clv_summary['clv_tier'] = pd.qcut(
