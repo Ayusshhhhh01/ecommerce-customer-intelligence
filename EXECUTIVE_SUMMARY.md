@@ -17,10 +17,12 @@ Acquisition-focused growth without post-purchase retention leads to leaky-bucket
 - **Spend Multiplier:** Champions (top recent repeat buyers) average **₹13,824.25 spend per customer**—over **3x the average single-purchase spend (₹4,529.69)**.
 - **The Retention Friction Point:** Retention decay is steepest immediately following the 1st purchase (74.51% drop-off). Once a customer completes their 2nd order, their conversion to a 3rd order jumps to **28.72%**.
 
-### 2. Primary Churn Drivers (SHAP Behavioral Analysis)
-- ** cadence Variance (`days_since_last_vs_avg_gap`):** Customers exceeding 1.2x their personal average inter-purchase interval represent an acute churn risk.
-- **Logistics Friction in Tier 2/3 Cities:** Delivery delays exceeding 2 days past promised delivery dates increase churn velocity by **42%** in non-metro regions.
-- **Payment & Return Dynamics:** Cash-on-Delivery (COD) transactions exhibit a **3.6x higher cancellation/return rate (18-20%)** compared to prepaid UPI transactions (4-5%).
+### 2. Primary Churn Drivers (Empirical TreeSHAP Analysis)
+- **1. City Tier Residency (`is_tier1`, SHAP 0.2644):** Customer residency in Tier-1 metros vs. Tier-2/3 cities is the single strongest global predictor of retention. Non-metro Tier-2/3 customers exhibit higher churn propensity driven by logistics delivery latency and Cash-on-Delivery (COD) friction.
+- **2. Purchase Velocity Deceleration (`order_frequency_trend`, SHAP 0.1311):** Ratio of recent 2 inter-purchase gap vs. historical average gap. A widening gap signals purchase deceleration and impending churn before the customer misses their expected order date.
+- **3. Cross-Category Breadth (`category_diversity`, SHAP 0.0661):** Distinct product categories purchased. Multi-category buyers (e.g., Electronics + Apparel + Grocery) exhibit higher long-term platform lock-in than single-category buyers.
+- **4. Pre-Cutoff Purchase Recency (`recency_days_at_T`, SHAP 0.0640):** Days elapsed since last purchase prior to evaluation cutoff date $T$.
+- **5. Personal Cadence Variance (`days_since_last_vs_avg_gap`, SHAP 0.0520):** Recency prior to cutoff relative to the customer's own baseline inter-purchase interval.
 
 ### 3. Predictive Model Performance & Data Leakage Resolution
 - **Forward-Looking Temporal Churn Design:** Built using a strict temporal cutoff ($T = \text{max\_order\_date} - 90 \text{ days}$) to evaluate features prior to $T$ against customer activity in $[T+1, T+90]$, eliminating data leakage.
