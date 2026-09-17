@@ -1,0 +1,12 @@
+feature,shap_importance
+frequency,0.4073159
+order_frequency_trend,0.14663734
+avg_order_val,0.05185229
+monetary,0.033003625
+is_tier1,0.029696193
+category_diversity,0.025484111
+avg_delay,0.023932023
+avg_review,0.016124766
+avg_items,0.01255365
+monetary_trend,0.012071735
+cod_ratio,0.006206641
