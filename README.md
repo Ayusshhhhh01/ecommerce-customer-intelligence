@@ -82,20 +82,21 @@ D:\Ssshhhh\Projexts\E commerce\
 | **At-Risk** | 742 | 4.01% | **₹71.49L** | 6.48% | 300.0 | ₹9,634.82 |
 | **Can't Lose Them** | 56 | 0.30% | **₹8.77L** | 0.79% | 425.8 | **₹15,652.58** |
 
-### 2. Leakage-Free Churn Model Performance
+### 2. Forward-Looking Temporal Churn Model Performance
 
-| Model Configuration | Feature Set | ROC-AUC | Active Class Precision | Active Class Recall | Active Class F1-Score | Overall Accuracy |
+| Model Configuration | Target Design | ROC-AUC | Active Class Precision | Active Class Recall | Active Class F1-Score | Overall Accuracy |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Logistic Regression (Clean)** | Leakage-Free | 0.5838 | 0.4602 | 0.3682 | 0.4091 | 66.40% |
-| **XGBoost Classifier (Clean)** | **Leakage-Free** | **0.5910** | **0.4668** | **0.3511** | **0.4008** | **66.83%** |
+| **Logistic Regression (Forward)** | Temporal $T-90$ Cutoff | **0.6256** | **0.1582** | **0.5518** | **0.2459** | **63.47%** |
+| **XGBoost Classifier (Forward)** | **Temporal $T-90$ Cutoff** | **0.6220** | **0.1600** | **0.5480** | **0.2477** | **64.10%** |
 
-### 3. Prescriptive Next-Best-Action Matrix (Headcount & Strategy)
+### 3. Prescriptive Next-Best-Action Matrix (Quantile Tercile Headcount & Strategy)
 
-| Churn Risk Tier | Low CLV (Bottom 50%) | Medium CLV (Middle 30%) | High CLV (Top 20%) | Action Strategy |
-| :--- | :---: | :---: | :---: | :--- |
-| **High Risk** | 764 | 484 | 14 | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Email |
-| **Medium Risk** | 8,485 | 4,970 | 2,589 | Proactive Product Cross-Sell Series |
-| **Low Risk** | 0 | 94 | 1,097 | VIP Loyalty Program & Early Sale Access |
+| Churn Risk Tier | Low CLV (Bottom 50%) | Medium CLV (Middle 30%) | High CLV (Top 20%) | Action Strategy | Total Headcount |
+| :--- | :---: | :---: | :---: | :--- | :---: |
+| **High Risk** (Top 33.3%) | 3,643 | 1,928 | **595** | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Offer<br>**Low CLV:** Automated Low-Cost Push Series | **6,166** |
+| **Medium Risk** (Middle 33.3%) | 3,063 | 2,811 | 292 | Proactive Product Cross-Sell & Engagement | **6,166** |
+| **Low Risk** (Bottom 33.3%) | 2,543 | 809 | 2,813 | VIP Loyalty Program & Early Sale Access | **6,165** |
+| **Total Customer Headcount** | **9,249** | **5,548** | **3,700** | **All Scored Delivered Customers** | **18,497** |
 
 ---
 

@@ -14,9 +14,9 @@ funnel_df = pd.DataFrame({
 })
 matrix_df = pd.DataFrame({
     'CLV_Tier': ['Low CLV', 'Medium CLV', 'High CLV'],
-    'High Risk': [5548, 5355, 1286],
-    'Medium Risk': [33, 64, 397],
-    'Low Risk': [3668, 129, 2017]
+    'High Risk': [3643, 1928, 595],
+    'Medium Risk': [3063, 2811, 292],
+    'Low Risk': [2543, 809, 2813]
 }).set_index('CLV_Tier')
 
 fig = plt.figure(figsize=(16, 10), facecolor='#f8f9fa')
@@ -30,8 +30,8 @@ kpis = [
     ('Total Delivered Revenue', 'Rs. 11.03 Cr', '#1f77b4'),
     ('Delivered Customers', '18,497', '#2ca02c'),
     ('Repeat Purchase Rate', '25.49%', '#ff7f0e'),
-    ('High Risk + High CLV Headcount', '1,286', '#d62728'),
-    ('Protected Revenue (@20% Win Rate)', 'Rs. 2.95 Lakhs', '#9467bd')
+    ('High Risk + High CLV Headcount', '595', '#d62728'),
+    ('Protected Revenue (@20% Win Rate)', 'Rs. 4.90 Lakhs', '#9467bd')
 ]
 
 for idx, (title, val, color) in enumerate(kpis):

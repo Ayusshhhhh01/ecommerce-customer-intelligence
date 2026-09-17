@@ -27,7 +27,7 @@ add_md("""# E-Commerce Customer Intelligence: Churn, CLV & Next-Best-Action
 
 ## 📌 Business Context & Objective
 Leadership in an e-commerce platform needs actionable answers to four core customer lifecycle questions:
-1. **Which customers are going to leave?** (Churn Prediction)
+1. **Which customers are going to leave?** (Forward-Looking Temporal Churn Prediction)
 2. **How valuable are they?** (RFM & Customer Lifetime Value in ₹ Lakhs/Crores)
 3. **Why are they leaving?** (SHAP Feature Drivers, Payment Methods & Delivery Friction)
 4. **What should we do about them?** (Prescriptive Next-Best-Action Framework)
@@ -45,7 +45,8 @@ add_md("""## 1. SQL Layer & Customer-Order Fact Table Construction
 In Indian e-commerce analytics, customer transactions span multiple operational domains (orders, payments, logistics delivery latency, review scores). We construct a unified `customer_order_fact` table in **SQLite** by joining `customers`, `orders`, `order_items`, `delivery_info`, and `reviews`. We also utilize SQL window functions (`LAG()`) to calculate customer repeat purchase rates and average inter-purchase intervals (days between consecutive orders).
 """)
 
-add_code("""import sqlite3
+add_code("""import os
+import sqlite3
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -181,7 +182,6 @@ rfm = pd.read_sql(rfm_sql, conn)
 max_dt = pd.to_datetime(rfm['last_order_date']).max() + pd.Timedelta(days=1)
 rfm['recency'] = (max_dt - pd.to_datetime(rfm['last_order_date'])).dt.days
 
-# Score Recency, Frequency, and Monetary (1-5 scale)
 rfm['r_score'] = pd.qcut(rfm['recency'], q=5, labels=[5, 4, 3, 2, 1]).astype(int)
 rfm['f_score'] = pd.cut(rfm['frequency'], bins=[0, 1, 2, 3, 5, 100], labels=[1, 2, 3, 4, 5]).astype(int)
 rfm['m_score'] = pd.qcut(rfm['monetary'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5]).astype(int)
@@ -342,25 +342,32 @@ plt.close()
 print(' [OK] Saved repeat purchase funnel chart to dashboard/repeat_purchase_funnel.png')
 """)
 
-# Step 5: Leakage-Free Churn Prediction Model
-add_md("""## 5. Churn Prediction Model (Leakage-Free Logistic Regression & XGBoost)
+# Step 5: Forward-Looking Temporal Churn Prediction Model
+add_md("""## 5. Forward-Looking Temporal Churn Prediction Model
 
-### 📖 How This Works (Interview Explanation & Data Leakage Audit)
-In e-commerce analytics, **Churn** is defined as post-purchase inactivity exceeding **90 days**.
-* **Data Leakage Audit & Fix:** Including `recency_days` or `days_since_last_vs_avg_gap` directly in the feature set introduces **target leakage** because the feature mathematically contains the target label definition (`recency_days > 90`).
-* **Strict Leakage-Free Feature Set:** We exclude `recency_days` and `days_since_last_vs_avg_gap` completely. The model relies strictly on non-leaky behavioral features: `frequency`, `monetary`, `avg_order_val`, `avg_items`, `avg_delay`, `avg_review`, `cod_ratio`, `is_tier1`, `order_frequency_trend` (recent 2 orders gap ratio), `category_diversity`, and `monetary_trend`.
-* **Class Imbalance Handling:** Using **`class_weight='balanced'`** in Logistic Regression and **`scale_pos_weight`** in XGBoost.
+### 📖 How This Works (Production Temporal Design)
+To prevent data leakage in production machine learning systems, we implement a **forward-looking temporal split**:
+1. **Cutoff Date $T$:** Selected at `max_order_date - 90 days` (2025-10-02).
+2. **Feature Extraction Window ($\\le T$):** All features (frequency, monetary, AOV, delivery delay, COD ratio, category diversity, and `recency_days_at_T` / `days_since_last_vs_avg_gap`) are calculated strictly using order history on or before $T$.
+3. **Target Observation Window ($[T+1 \\text{ to } T+90]$):** Churn label $= 1$ if zero orders were placed in the 90 days after $T$, else $0$.
+4. **Leakage Safety:** `recency_days_at_T` measures purchase recency *prior* to cutoff date $T$, while the target label observes activity *after* cutoff date $T$. This allows recency signals to be used legitimately without target leakage!
 """)
 
-add_code("""# Feature Engineering for Churn Prediction (Strict Leakage-Free Features)
-max_dt = fact_df['order_dt'].max()
+add_code("""# Forward-Looking Temporal Split
+max_order_date = fact_df['order_dt'].max()
+cutoff_date = max_order_date - pd.Timedelta(days=90)
 
-fact_sorted = fact_df.sort_values(['customer_id', 'order_dt'])
-fact_sorted['prev_order_dt'] = fact_sorted.groupby('customer_id')['order_dt'].shift(1)
-fact_sorted['days_since_prev'] = (fact_sorted['order_dt'] - fact_sorted['prev_order_dt']).dt.days
+df_feature = fact_df[fact_df['order_dt'] <= cutoff_date].copy()
+df_target = fact_df[fact_df['order_dt'] > cutoff_date].copy()
 
-cust_base = fact_sorted.groupby('customer_id').agg(
-    last_order=('order_dt', 'max'),
+target_active_customers = set(df_target['customer_id'].unique())
+
+df_feature_sorted = df_feature.sort_values(['customer_id', 'order_dt'])
+df_feature_sorted['prev_order_dt'] = df_feature_sorted.groupby('customer_id')['order_dt'].shift(1)
+df_feature_sorted['days_since_prev'] = (df_feature_sorted['order_dt'] - df_feature_sorted['prev_order_dt']).dt.days
+
+cust_features_T = df_feature_sorted.groupby('customer_id').agg(
+    last_order_at_T=('order_dt', 'max'),
     frequency=('order_id', 'nunique'),
     monetary=('order_total_amount', 'sum'),
     avg_order_val=('order_total_amount', 'mean'),
@@ -372,125 +379,118 @@ cust_base = fact_sorted.groupby('customer_id').agg(
     avg_inter_gap=('days_since_prev', 'mean')
 ).reset_index()
 
-cat_div = fact_sorted.groupby('customer_id')['order_category_count'].sum().reset_index()
-cat_div.columns = ['customer_id', 'category_diversity']
-cust_base = cust_base.merge(cat_div, on='customer_id', how='left')
+cat_div_T = df_feature_sorted.groupby('customer_id')['order_category_count'].sum().reset_index()
+cat_div_T.columns = ['customer_id', 'category_diversity']
+cust_features_T = cust_features_T.merge(cat_div_T, on='customer_id', how='left')
 
-last_2_orders = fact_sorted.groupby('customer_id').tail(2)
-last_2_stats = last_2_orders.groupby('customer_id').agg(
+last_2_T = df_feature_sorted.groupby('customer_id').tail(2)
+last_2_stats_T = last_2_T.groupby('customer_id').agg(
     recent_2_aov=('order_total_amount', 'mean'),
     recent_2_gap=('days_since_prev', 'mean')
 ).reset_index()
+cust_features_T = cust_features_T.merge(last_2_stats_T, on='customer_id', how='left')
 
-cust_base = cust_base.merge(last_2_stats, on='customer_id', how='left')
+cust_features_T['recency_days_at_T'] = (cutoff_date - cust_features_T['last_order_at_T']).dt.days
+cust_features_T['avg_delay'] = cust_features_T['avg_delay'].fillna(0)
+cust_features_T['avg_review'] = cust_features_T['avg_review'].fillna(4.0)
 
-cust_base['recency_days'] = (max_dt - cust_base['last_order']).dt.days
-cust_base['avg_delay'] = cust_base['avg_delay'].fillna(0)
-cust_base['avg_review'] = cust_base['avg_review'].fillna(4.0)
-
-cust_base['order_frequency_trend'] = np.where(
-    cust_base['frequency'] > 1,
-    cust_base['recent_2_gap'] / (cust_base['avg_inter_gap'] + 1e-5),
+overall_avg_gap_T = cust_features_T['avg_inter_gap'].mean()
+cust_features_T['order_frequency_trend'] = np.where(
+    cust_features_T['frequency'] > 1,
+    cust_features_T['recent_2_gap'] / (cust_features_T['avg_inter_gap'] + 1e-5),
     1.0
 )
 
-cust_base['monetary_trend'] = np.where(
-    cust_base['frequency'] > 1,
-    cust_base['recent_2_aov'] / (cust_base['avg_order_val'] + 1e-5),
+cust_features_T['days_since_last_vs_avg_gap'] = np.where(
+    cust_features_T['frequency'] > 1,
+    cust_features_T['recency_days_at_T'] / (cust_features_T['avg_inter_gap'] + 1e-5),
+    cust_features_T['recency_days_at_T'] / (overall_avg_gap_T + 1e-5)
+)
+
+cust_features_T['monetary_trend'] = np.where(
+    cust_features_T['frequency'] > 1,
+    cust_features_T['recent_2_aov'] / (cust_features_T['avg_order_val'] + 1e-5),
     1.0
 )
 
-# Churn Target: 1 = Inactive > 90 days
-cust_base['is_churned'] = (cust_base['recency_days'] > 90).astype(int)
+# Churn Target Label: 1 if ZERO orders in target window, else 0
+cust_features_T['is_churned'] = cust_features_T['customer_id'].apply(lambda cid: 1 if cid not in target_active_customers else 0)
 
-# STRICT LEAKAGE-FREE FEATURE SET (EXCLUDES recency_days & days_since_last_vs_avg_gap)
-leak_free_features = [
+forward_features = [
     'frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 
-    'avg_review', 'cod_ratio', 'is_tier1', 'order_frequency_trend', 
+    'avg_review', 'cod_ratio', 'is_tier1', 'recency_days_at_T',
+    'days_since_last_vs_avg_gap', 'order_frequency_trend', 
     'category_diversity', 'monetary_trend'
 ]
 
-X_clean = cust_base[leak_free_features].fillna(0)
-y = cust_base['is_churned']
+X_fw = cust_features_T[forward_features].fillna(0)
+y_fw = cust_features_T['is_churned']
 
-X_tr, X_te, y_tr, y_te = train_test_split(X_clean, y, test_size=0.25, random_state=42, stratify=y)
+X_tr_fw, X_te_fw, y_tr_fw, y_te_fw = train_test_split(X_fw, y_fw, test_size=0.25, random_state=42, stratify=y_fw)
 
-# Fit Leakage-Free Models
-lr_clean = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr, y_tr)
-scale_pos_weight = (y_tr == 0).sum() / (y_tr == 1).sum()
-xgb_clean = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr, y_tr)
+lr_fw = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_fw, y_tr_fw)
+scale_pos_weight_fw = (y_tr_fw == 0).sum() / (y_tr_fw == 1).sum()
+xgb_fw = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight_fw, random_state=42).fit(X_tr_fw, y_tr_fw)
 
-lr_p = lr_clean.predict_proba(X_te)[:, 1]
-xgb_p = xgb_clean.predict_proba(X_te)[:, 1]
+lr_fw_p = lr_fw.predict_proba(X_te_fw)[:, 1]
+xgb_fw_p = xgb_fw.predict_proba(X_te_fw)[:, 1]
 
-lr_pred = lr_clean.predict(X_te)
-xgb_pred = xgb_clean.predict(X_te)
+lr_fw_pred = lr_fw.predict(X_te_fw)
+xgb_fw_pred = xgb_fw.predict(X_te_fw)
 
-rep_lr = classification_report(y_te, lr_pred, output_dict=True)
-rep_xgb = classification_report(y_te, xgb_pred, output_dict=True)
+rep_lr_fw = classification_report(y_te_fw, lr_fw_pred, output_dict=True)
+rep_xgb_fw = classification_report(y_te_fw, xgb_fw_pred, output_dict=True)
 
 comp_df = pd.DataFrame({
-    'Model_Configuration': ['Logistic Regression (Leakage-Free)', 'XGBoost Classifier (Leakage-Free)'],
-    'ROC_AUC': [round(roc_auc_score(y_te, lr_p), 4), round(roc_auc_score(y_te, xgb_p), 4)],
-    'Active_Class_F1': [round(rep_lr['0']['f1-score'], 4), round(rep_xgb['0']['f1-score'], 4)],
-    'Active_Class_Precision': [round(rep_lr['0']['precision'], 4), round(rep_xgb['0']['precision'], 4)],
-    'Active_Class_Recall': [round(rep_lr['0']['recall'], 4), round(rep_xgb['0']['recall'], 4)],
-    'Overall_Accuracy': [round(rep_lr['accuracy'], 4), round(rep_xgb['accuracy'], 4)]
+    'Model_Configuration': ['Forward-Looking Logistic Regression', 'Forward-Looking XGBoost Classifier'],
+    'ROC_AUC': [round(roc_auc_score(y_te_fw, lr_fw_p), 4), round(roc_auc_score(y_te_fw, xgb_fw_p), 4)],
+    'Active_Class_F1': [round(rep_lr_fw['0']['f1-score'], 4), round(rep_xgb_fw['0']['f1-score'], 4)],
+    'Active_Class_Precision': [round(rep_lr_fw['0']['precision'], 4), round(rep_xgb_fw['0']['precision'], 4)],
+    'Active_Class_Recall': [round(rep_lr_fw['0']['recall'], 4), round(rep_xgb_fw['0']['recall'], 4)],
+    'Overall_Accuracy': [round(rep_lr_fw['accuracy'], 4), round(rep_xgb_fw['accuracy'], 4)]
 })
 
-print('=== LEAKAGE-FREE CHURN MODEL EVALUATION ===')
+print('=== FORWARD-LOOKING CHURN MODEL EVALUATION ===')
 print(comp_df.to_string(index=False))
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-ConfusionMatrixDisplay.from_predictions(y_te, lr_pred, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
-axes[0].set_title('Logistic Regression (Clean) Confusion Matrix', fontweight='bold')
+ConfusionMatrixDisplay.from_predictions(y_te_fw, lr_fw_pred, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[0].set_title('Logistic Regression (Forward) Confusion Matrix', fontweight='bold')
 
-ConfusionMatrixDisplay.from_predictions(y_te, xgb_pred, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
-axes[1].set_title('XGBoost (Clean) Confusion Matrix', fontweight='bold')
+ConfusionMatrixDisplay.from_predictions(y_te_fw, xgb_fw_pred, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[1].set_title('XGBoost (Forward) Confusion Matrix', fontweight='bold')
 plt.tight_layout()
 plt.savefig('../dashboard/churn_confusion_matrices.png', dpi=300)
 plt.close()
-print(' [OK] Saved clean confusion matrices to dashboard/churn_confusion_matrices.png')
-
-# Predict churn probability for full dataset using clean model
-cust_base['churn_probability'] = xgb_clean.predict_proba(X_clean)[:, 1]
-def assign_risk_tier(prob):
-    if prob >= 0.60:
-        return 'High Risk'
-    elif prob >= 0.30:
-        return 'Medium Risk'
-    else:
-        return 'Low Risk'
-
-cust_base['churn_risk_tier'] = cust_base['churn_probability'].apply(assign_risk_tier)
+print(' [OK] Saved forward confusion matrices to dashboard/churn_confusion_matrices.png')
 """)
 
 # Step 6: SHAP Feature Importance
 add_md("""## 6. SHAP Feature Importance & Driver Analysis
 
 ### 📖 How This Works (Interview Explanation)
-We run TreeSHAP (`shap.TreeExplainer`) on the **leakage-free XGBoost model** to evaluate true behavioral drivers shifting customer churn risk.
+We run TreeSHAP (`shap.TreeExplainer`) on the **Forward-Looking XGBoost Model** to evaluate true behavioral drivers of future churn.
 """)
 
-add_code("""# TreeSHAP Explainer on Leakage-Free XGBoost Model
-explainer = shap.TreeExplainer(xgb_clean)
-shap_values = explainer.shap_values(X_te)
+add_code("""# TreeSHAP Explainer on Forward-Looking XGBoost Model
+explainer = shap.TreeExplainer(xgb_fw)
+shap_values_fw = explainer.shap_values(X_te_fw)
 
-mean_abs_shap = np.abs(shap_values).mean(axis=0)
-shap_summary = pd.DataFrame({'feature': leak_free_features, 'shap_importance': mean_abs_shap}).sort_values('shap_importance', ascending=False)
+mean_abs_shap_fw = np.abs(shap_values_fw).mean(axis=0)
+shap_summary = pd.DataFrame({'feature': forward_features, 'shap_importance': mean_abs_shap_fw}).sort_values('shap_importance', ascending=False)
 
-print('=== LEAKAGE-FREE SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
+print('=== FORWARD-LOOKING SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
 print(shap_summary.to_string(index=False))
 
 shap_summary.to_csv('../dashboard/shap_driver_importance.csv', index=False)
 
 plt.figure(figsize=(10, 6))
-shap.summary_plot(shap_values, X_te, feature_names=leak_free_features, show=False)
-plt.title('SHAP Feature Importance Beeswarm Plot (Leakage-Free Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
+shap.summary_plot(shap_values_fw, X_te_fw, feature_names=forward_features, show=False)
+plt.title('SHAP Feature Importance Beeswarm Plot (Forward-Looking Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
 plt.tight_layout()
 plt.savefig('../dashboard/shap_beeswarm_summary.png', dpi=300)
 plt.close()
-print(' [OK] Saved clean SHAP summary plot to dashboard/shap_beeswarm_summary.png')
+print(' [OK] Saved forward SHAP summary plot to dashboard/shap_beeswarm_summary.png')
 """)
 
 # Step 7: Customer Lifetime Value (CLV) Prediction
@@ -516,7 +516,7 @@ clv_summary = lifetimes.utils.summary_data_from_transaction_data(
     customer_id_col='customer_id',
     datetime_col='order_dt',
     monetary_value_col='order_total_amount',
-    observation_period_end=max_dt
+    observation_period_end=max_order_date
 )
 
 bgf = BetaGeoFitter(penalizer_coef=0.001)
@@ -559,14 +559,62 @@ clv_tier_dist.to_csv('../dashboard/clv_distribution_tiers.csv', index=False)
 """)
 
 # Step 8: Next-Best-Action Matrix
-add_md("""## 8. Prescriptive Next-Best-Action Matrix
+add_md("""## 8. Prescriptive Next-Best-Action Matrix (Scored via Production Model)
 
 ### 📖 How This Works (Interview Explanation)
-By cross-tabulating **Churn Risk** (High / Medium / Low) with **CLV Tier** (High / Medium / Low), we construct a **3x3 Prescriptive Decision Matrix**.
+In production deployment, the **Forward-Looking Model** trained on historical $T-90$ data is scored against **current full-history customer features** (up to `max_order_date`) to predict live churn probabilities for all 18,497 customers.
+By cross-tabulating **Live Churn Risk** (High / Medium / Low) with **CLV Tier** (High / Medium / Low), we construct a **3x3 Prescriptive Decision Matrix**.
 """)
 
-add_code("""# Merge Churn Risk and CLV Tier
-final_customer_df = cust_base.merge(
+add_code("""# Production Live Churn Scoring using Validated Model
+fact_sorted_prod = fact_df.sort_values(['customer_id', 'order_dt'])
+fact_sorted_prod['prev_order_dt'] = fact_sorted_prod.groupby('customer_id')['order_dt'].shift(1)
+fact_sorted_prod['days_since_prev'] = (fact_sorted_prod['order_dt'] - fact_sorted_prod['prev_order_dt']).dt.days
+
+cust_prod = fact_sorted_prod.groupby('customer_id').agg(
+    last_order=('order_dt', 'max'),
+    frequency=('order_id', 'nunique'),
+    monetary=('order_total_amount', 'sum'),
+    avg_order_val=('order_total_amount', 'mean'),
+    avg_items=('total_items', 'mean'),
+    avg_delay=('delivery_delay_days', 'mean'),
+    avg_review=('review_score', 'mean'),
+    cod_ratio=('payment_method', lambda x: (x == 'COD').mean()),
+    is_tier1=('city_tier', lambda x: 1 if (x.iloc[0] == 'Tier 1') else 0),
+    avg_inter_gap=('days_since_prev', 'mean')
+).reset_index()
+
+cat_div_prod = fact_sorted_prod.groupby('customer_id')['order_category_count'].sum().reset_index()
+cat_div_prod.columns = ['customer_id', 'category_diversity']
+cust_prod = cust_prod.merge(cat_div_prod, on='customer_id', how='left')
+
+last_2_prod = fact_sorted_prod.groupby('customer_id').tail(2)
+last_2_stats_prod = last_2_prod.groupby('customer_id').agg(
+    recent_2_aov=('order_total_amount', 'mean'),
+    recent_2_gap=('days_since_prev', 'mean')
+).reset_index()
+cust_prod = cust_prod.merge(last_2_stats_prod, on='customer_id', how='left')
+
+cust_prod['recency_days_at_T'] = (max_order_date - cust_prod['last_order']).dt.days
+cust_prod['avg_delay'] = cust_prod['avg_delay'].fillna(0)
+cust_prod['avg_review'] = cust_prod['avg_review'].fillna(4.0)
+
+overall_avg_gap_prod = cust_prod['avg_inter_gap'].mean()
+cust_prod['order_frequency_trend'] = np.where(cust_prod['frequency'] > 1, cust_prod['recent_2_gap'] / (cust_prod['avg_inter_gap'] + 1e-5), 1.0)
+cust_prod['days_since_last_vs_avg_gap'] = np.where(cust_prod['frequency'] > 1, cust_prod['recency_days_at_T'] / (cust_prod['avg_inter_gap'] + 1e-5), cust_prod['recency_days_at_T'] / (overall_avg_gap_prod + 1e-5))
+cust_prod['monetary_trend'] = np.where(cust_prod['frequency'] > 1, cust_prod['recent_2_aov'] / (cust_prod['avg_order_val'] + 1e-5), 1.0)
+
+X_prod = cust_prod[forward_features].fillna(0)
+cust_prod['churn_probability'] = xgb_fw.predict_proba(X_prod)[:, 1]
+
+# Quantile-Based Terciles for Churn Risk Tiering (Low Risk: Bottom 33.3%, Medium Risk: Middle 33.3%, High Risk: Top 33.3%)
+cust_prod['churn_risk_tier'] = pd.qcut(
+    cust_prod['churn_probability'].rank(method='first'),
+    q=[0, 1/3, 2/3, 1.0],
+    labels=['Low Risk', 'Medium Risk', 'High Risk']
+)
+
+final_customer_df = cust_prod.merge(
     clv_summary[['predicted_purchases_12m', 'predicted_clv_12m', 'clv_tier']],
     on='customer_id',
     how='left'
@@ -656,8 +704,8 @@ add_md("""## 10. Dashboard-Ready Exports & Executive Power BI Specifications
 1. **Executive KPI Cards (Header):**
    * Total Delivered Revenue (₹11.03 Cr)
    * Repeat Purchase Rate (25.49%)
-   * High Risk + High CLV Headcount (1,286 Customers)
-   * Potential Protected Revenue @ 20% Win Rate (₹2.95 Lakhs)
+   * High Risk + High CLV Headcount (353 Customers)
+   * Potential Protected Revenue @ 20% Win Rate (₹5,630.84)
 """)
 
 add_code("""print(' [OK] All dashboard summary CSVs exported to dashboard/:')
@@ -676,4 +724,4 @@ os.makedirs('notebooks', exist_ok=True)
 with open('notebooks/01_ecommerce_customer_intelligence.ipynb', 'w', encoding='utf-8') as f:
     json.dump(nb, f, indent=2)
 
-print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with LEAKAGE-FREE models')
+print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with FORWARD-LOOKING CHURN DESIGN')

@@ -26,15 +26,15 @@ This guide prepares you to present, justify, and answer tough technical & busine
 
 ### 4. How did you audit and prevent Data Leakage in your Churn Model?
 > **Model Answer:**  
-> *"When we initially tested ratio features like `days_since_last_vs_avg_gap` (`recency_days / avg_inter_gap`), the XGBoost ROC-AUC jumped to 0.998. Upon performing a SHAP audit, `days_since_last_vs_avg_gap` contributed over 63% of total model importance. Because churn was defined as `recency_days > 90`, feeding recency-derived ratios directly into a retrospective snapshot model constituted target leakage (the feature contained the target label definition).*
+> *"When we initially tested snapshot ratio features like `days_since_last_vs_avg_gap` (`recency_days / avg_inter_gap`), the XGBoost ROC-AUC jumped to 0.998. Upon performing a SHAP audit, `days_since_last_vs_avg_gap` contributed over 63% of total model importance. Because churn was defined as `recency_days > 90`, feeding recency-derived ratios directly into a retrospective snapshot model constituted target leakage (the feature contained the target label definition).*
 > 
-> *We conducted a strict audit, excluding `recency_days` and `days_since_last_vs_avg_gap` entirely. The resulting **leakage-free XGBoost model achieved 0.591 ROC-AUC**, relying on true non-leaky behavioral features like `frequency` (SHAP 0.407), `order_frequency_trend` (SHAP 0.147), and `avg_order_val` (SHAP 0.052). In production, the complete fix is to use a forward-looking target window (features extracted up to cutoff date T, churn observed in T+1 to T+90)."*
+> *To fix this fundamentally, we built a **Forward-Looking Temporal Churn Design**: we selected a cutoff date $T = \text{max\_order\_date} - 90 \text{ days}$, engineered all customer features using transaction history strictly up to $T$, and defined churn as zero order activity during $[T+1 \text{ to } T+90]$. This allowed pre-cutoff recency (`recency_days_at_T`) and cadence variance (`days_since_last_vs_avg_gap`) to be evaluated legitimately without target leakage, resulting in an un-leaked **ROC-AUC of 0.6220 (XGBoost) / 0.6256 (Logistic Regression)**."*
 
 ---
 
-### 5. What did SHAP analysis reveal about leakage-free behavioral churn drivers?
+### 5. What did SHAP analysis reveal about forward-looking behavioral churn drivers?
 > **Model Answer:**  
-> *"TreeSHAP on the leakage-free model revealed that **`frequency` (0.407)** and **`order_frequency_trend` (0.147)** were the primary drivers. `order_frequency_trend` measures the ratio of the inter-purchase interval on the 2 most recent orders vs. historical baseline gap—capturing purchase velocity deceleration before churn occurs without leaking recency snapshot data."*
+> *"TreeSHAP on the un-leaked forward-looking XGBoost model revealed that **City Tier (`is_tier1`: 0.2644)** and **Order Frequency Trend (`order_frequency_trend`: 0.1311)** were the top drivers. `order_frequency_trend` measures the ratio of the inter-purchase interval on the 2 most recent orders vs. historical baseline gap—capturing purchase velocity deceleration before churn occurs. Category diversity (0.0661) and pre-cutoff recency (0.0640) also provided significant signal."*
 
 ---
 
@@ -65,3 +65,11 @@ This guide prepares you to present, justify, and answer tough technical & busine
 ### 10. How would you deploy this project into production?
 > **Model Answer:**  
 > *"I would deploy the feature engineering and XGBoost inference pipeline as an automated Airflow batch job running weekly using a 90-day forward-looking target window. Churn risk scores and CLV tiers would be synced to our Customer Data Platform (CDP / Segment / Braze), automatically triggering dynamic SMS/Email win-back workflows when velocity shifts occur."*
+
+---
+
+### 11. Why did you use quantile-based terciles for churn risk tiering instead of fixed probability thresholds?
+> **Model Answer:**  
+> *"In rare-event classification (such as a forward-looking 90-day retention window where active buyers are a minority class), predicted probabilities from calibrated models cluster around the base rate. Applying fixed thresholds (e.g., $P \ge 0.60$ High, $P \ge 0.30$ Medium) collapses almost the entire customer base into High and Medium risk (sweeping >99% above 0.30), leaving the Low Risk bucket virtually empty.*
+> 
+> *To maintain an actionable 3-tier operational framework for marketing operations, we used **quantile-based terciles** (`pd.qcut` into top 33.3% High, middle 33.3% Medium, bottom 33.3% Low Risk). This relative rank-ordering ensures equal, balanced operational capacity allocation across marketing channels, exactly matching how CLV tiers are constructed."*

@@ -22,8 +22,10 @@ Acquisition-focused growth without post-purchase retention leads to leaky-bucket
 - **Logistics Friction in Tier 2/3 Cities:** Delivery delays exceeding 2 days past promised delivery dates increase churn velocity by **42%** in non-metro regions.
 - **Payment & Return Dynamics:** Cash-on-Delivery (COD) transactions exhibit a **3.6x higher cancellation/return rate (18-20%)** compared to prepaid UPI transactions (4-5%).
 
-### 3. Predictive Model Performance
-- **XGBoost Churn Model:** Achieves **0.9982 ROC-AUC** and an **F1-score of 0.9674** by leveraging trend-based velocity features (`days_since_last_vs_avg_gap`, `order_frequency_trend`).
+### 3. Predictive Model Performance & Data Leakage Resolution
+- **Forward-Looking Temporal Churn Design:** Built using a strict temporal cutoff ($T = \text{max\_order\_date} - 90 \text{ days}$) to evaluate features prior to $T$ against customer activity in $[T+1, T+90]$, eliminating data leakage.
+- **Model Performance:** **XGBoost Classifier Forward ROC-AUC: 0.6220** | **Logistic Regression Forward ROC-AUC: 0.6256**.
+- **Top SHAP Drivers:** City Tier (`is_tier1`: 0.2644), Order Frequency Trend (`order_frequency_trend`: 0.1311), Category Diversity (`category_diversity`: 0.0661), Pre-cutoff Recency (`recency_days_at_T`: 0.0640), and Cadence Variance (`days_since_last_vs_avg_gap`: 0.0520).
 
 ---
 
@@ -31,18 +33,19 @@ Acquisition-focused growth without post-purchase retention leads to leaky-bucket
 
 | Customer Segment | Risk & Value Quadrant | Headcount | Prescriptive Strategy & Action | Projected Impact |
 | :--- | :--- | :---: | :--- | :--- |
-| **High Risk + High CLV** | Critical At-Risk VIPs | **1,286** | **VIP Urgent Retention:** Dedicated concierge outreach + ₹1,500 exclusive category voucher. | Protects **₹2.95 Lakhs – ₹4.43 Lakhs** in annual revenue @ 20-30% win rate. |
-| **High Risk + Medium CLV** | Win-Back Targets | **5,355** | **Automated Win-Back Campaign:** Targeted 15% category discount via SMS & Email. | Re-engages mid-tier buyers before complete dormancy. |
-| **Low Risk + High CLV** | Brand Champions | **2,017** | **VIP Loyalty Program:** Early sale access, priority delivery, & referral incentives. | Increases average order frequency by 15-20%. |
-| **High Risk + Low CLV** | Low-Value Churners | **5,548** | **Low-Cost Push Series:** Automated lifecycle notifications (zero discount spend). | Cost-effective passive re-engagement. |
+| **High Risk + High CLV** | Critical At-Risk VIPs | **595** | **VIP Urgent Retention:** Dedicated concierge outreach + ₹1,500 exclusive category voucher. | Protects **₹4.90 Lakhs** in annual revenue @ 20% win rate (out of ₹24.48L total risk). |
+| **High Risk + Medium CLV** | Win-Back Targets | **1,928** | **Automated Win-Back Campaign:** Targeted 15% category discount offer. | Re-engages mid-tier buyers before complete dormancy. |
+| **High Risk + Low CLV** | Low-Value Churners | **3,643** | **Low-Cost Push Notification Series:** Automated lifecycle notifications. | Zero discount spend passive re-engagement. |
+| **Medium Risk + High CLV** | High-Potential Growth | **292** | **Proactive Engagement & Cross-Sell:** Product recommendations + category discovery. | Safeguards **₹8.53 Lakhs** total expected CLV. |
+| **Low Risk + High CLV** | Brand Champions | **2,813** | **VIP Loyalty Program:** Early sale access, priority delivery, & rewards. | Protects **₹48.42 Lakhs** top spender CLV & advocacy. |
 
 ---
 
 ## 💰 Projected Financial Impact
-By executing the **VIP Urgent Retention Strategy** on the 1,286 High Risk + High CLV customers:
-- **At 10% Campaign Win Rate:** Protects **₹1.48 Lakhs** in annual net revenue.
-- **At 20% Campaign Win Rate:** Protects **₹2.95 Lakhs** in annual net revenue.
-- **At 30% Campaign Win Rate:** Protects **₹4.43 Lakhs** in annual net revenue.
+By executing the **VIP Urgent Retention Strategy** on the 595 High Risk + High CLV customers (avg. expected spend ₹4,113.49):
+- **At 10% Campaign Win Rate:** Protects **₹2.45 Lakhs** in annual net revenue.
+- **At 20% Campaign Win Rate:** Protects **₹4.90 Lakhs** in annual net revenue.
+- **At 30% Campaign Win Rate:** Protects **₹7.34 Lakhs** in annual net revenue.
 
 ---
 
