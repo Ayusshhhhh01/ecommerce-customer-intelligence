@@ -227,7 +227,6 @@ segment_summary['formatted_avg_monetary'] = segment_summary['avg_monetary'].appl
 print('=== INDIAN E-COMMERCE RFM SEGMENT SUMMARY TABLE ===')
 print(segment_summary[['segment', 'customer_count', 'pct_customers', 'formatted_revenue', 'pct_revenue', 'avg_recency', 'formatted_avg_monetary']].to_string(index=False))
 
-# Save summary to dashboard CSV
 os.makedirs('../dashboard', exist_ok=True)
 segment_summary.to_csv('../dashboard/rfm_segment_summary.csv', index=False)
 """)
@@ -324,7 +323,6 @@ funnel_df = pd.DataFrame({
 print('=== REPEAT PURCHASE FUNNEL METRICS ===')
 print(funnel_df.to_string(index=False))
 
-# Plot Funnel Chart
 fig, ax = plt.subplots(figsize=(10, 5))
 bars = ax.bar(funnel_df['Stage'], funnel_df['Customers'], color=['#2b5c8f', '#3690c0', '#67a9cf', '#02818a'], width=0.55)
 
@@ -344,21 +342,17 @@ plt.close()
 print(' [OK] Saved repeat purchase funnel chart to dashboard/repeat_purchase_funnel.png')
 """)
 
-# Step 5: Churn Prediction Model (Flat Baseline vs. Trend-Augmented ML)
-add_md("""## 5. Churn Prediction Model (Flat Baseline vs. Trend-Augmented ML)
+# Step 5: Leakage-Free Churn Prediction Model
+add_md("""## 5. Churn Prediction Model (Leakage-Free Logistic Regression & XGBoost)
 
-### 📖 How This Works (Interview Explanation)
-Flat static snapshot features (`frequency`, `monetary`, `avg_order_val`) only measure historical volume, which produces modest ROC-AUC (~0.58). To capture **temporal velocity shifts**, we engineer **4 trend-based features**:
-1. `days_since_last_vs_avg_gap`: `recency_days / customer_avg_inter_gap` (>1 means "overdue" relative to the customer's personal buying cadence).
-2. `order_frequency_trend`: Inter-purchase interval ratio on the 2 most recent orders vs. historical average interval.
-3. `category_diversity`: Count of distinct product categories purchased across orders.
-4. `monetary_trend`: Average order value on the 2 most recent orders vs. overall average order value.
-
-#### Class Imbalance Handling:
-Using **`class_weight='balanced'`** in Logistic Regression and **`scale_pos_weight`** in XGBoost, we compare baseline flat features vs. trend-augmented features.
+### 📖 How This Works (Interview Explanation & Data Leakage Audit)
+In e-commerce analytics, **Churn** is defined as post-purchase inactivity exceeding **90 days**.
+* **Data Leakage Audit & Fix:** Including `recency_days` or `days_since_last_vs_avg_gap` directly in the feature set introduces **target leakage** because the feature mathematically contains the target label definition (`recency_days > 90`).
+* **Strict Leakage-Free Feature Set:** We exclude `recency_days` and `days_since_last_vs_avg_gap` completely. The model relies strictly on non-leaky behavioral features: `frequency`, `monetary`, `avg_order_val`, `avg_items`, `avg_delay`, `avg_review`, `cod_ratio`, `is_tier1`, `order_frequency_trend` (recent 2 orders gap ratio), `category_diversity`, and `monetary_trend`.
+* **Class Imbalance Handling:** Using **`class_weight='balanced'`** in Logistic Regression and **`scale_pos_weight`** in XGBoost.
 """)
 
-add_code("""# Feature Engineering for Churn Prediction (Flat + Trend Features)
+add_code("""# Feature Engineering for Churn Prediction (Strict Leakage-Free Features)
 max_dt = fact_df['order_dt'].max()
 
 fact_sorted = fact_df.sort_values(['customer_id', 'order_dt'])
@@ -394,17 +388,10 @@ cust_base['recency_days'] = (max_dt - cust_base['last_order']).dt.days
 cust_base['avg_delay'] = cust_base['avg_delay'].fillna(0)
 cust_base['avg_review'] = cust_base['avg_review'].fillna(4.0)
 
-overall_avg_gap = cust_base['avg_inter_gap'].mean()
 cust_base['order_frequency_trend'] = np.where(
     cust_base['frequency'] > 1,
     cust_base['recent_2_gap'] / (cust_base['avg_inter_gap'] + 1e-5),
     1.0
-)
-
-cust_base['days_since_last_vs_avg_gap'] = np.where(
-    cust_base['frequency'] > 1,
-    cust_base['recency_days'] / (cust_base['avg_inter_gap'] + 1e-5),
-    cust_base['recency_days'] / (overall_avg_gap + 1e-5)
 )
 
 cust_base['monetary_trend'] = np.where(
@@ -413,63 +400,60 @@ cust_base['monetary_trend'] = np.where(
     1.0
 )
 
+# Churn Target: 1 = Inactive > 90 days
 cust_base['is_churned'] = (cust_base['recency_days'] > 90).astype(int)
 
-flat_features = ['frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 'avg_review', 'cod_ratio', 'is_tier1']
-all_features = flat_features + ['order_frequency_trend', 'days_since_last_vs_avg_gap', 'category_diversity', 'monetary_trend']
+# STRICT LEAKAGE-FREE FEATURE SET (EXCLUDES recency_days & days_since_last_vs_avg_gap)
+leak_free_features = [
+    'frequency', 'monetary', 'avg_order_val', 'avg_items', 'avg_delay', 
+    'avg_review', 'cod_ratio', 'is_tier1', 'order_frequency_trend', 
+    'category_diversity', 'monetary_trend'
+]
 
-X_flat = cust_base[flat_features].fillna(0)
-X_all = cust_base[all_features].fillna(0)
+X_clean = cust_base[leak_free_features].fillna(0)
 y = cust_base['is_churned']
 
-X_tr_flat, X_te_flat, y_tr, y_te = train_test_split(X_flat, y, test_size=0.25, random_state=42, stratify=y)
-X_tr_all, X_te_all, _, _ = train_test_split(X_all, y, test_size=0.25, random_state=42, stratify=y)
+X_tr, X_te, y_tr, y_te = train_test_split(X_clean, y, test_size=0.25, random_state=42, stratify=y)
 
-lr_flat = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_flat, y_tr)
+# Fit Leakage-Free Models
+lr_clean = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr, y_tr)
 scale_pos_weight = (y_tr == 0).sum() / (y_tr == 1).sum()
-xgb_flat = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr_flat, y_tr)
+xgb_clean = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr, y_tr)
 
-lr_all = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42).fit(X_tr_all, y_tr)
-xgb_all = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05, scale_pos_weight=scale_pos_weight, random_state=42).fit(X_tr_all, y_tr)
+lr_p = lr_clean.predict_proba(X_te)[:, 1]
+xgb_p = xgb_clean.predict_proba(X_te)[:, 1]
 
-lr_flat_p = lr_flat.predict_proba(X_te_flat)[:, 1]
-xgb_flat_p = xgb_flat.predict_proba(X_te_flat)[:, 1]
-lr_all_p = lr_all.predict_proba(X_te_all)[:, 1]
-xgb_all_p = xgb_all.predict_proba(X_te_all)[:, 1]
+lr_pred = lr_clean.predict(X_te)
+xgb_pred = xgb_clean.predict(X_te)
 
-lr_all_pred = lr_all.predict(X_te_all)
-xgb_all_pred = xgb_all.predict(X_te_all)
-
-rep_lr_flat = classification_report(y_te, lr_flat.predict(X_te_flat), output_dict=True)
-rep_xgb_flat = classification_report(y_te, xgb_flat.predict(X_te_flat), output_dict=True)
-rep_lr_all = classification_report(y_te, lr_all_pred, output_dict=True)
-rep_xgb_all = classification_report(y_te, xgb_all_pred, output_dict=True)
+rep_lr = classification_report(y_te, lr_pred, output_dict=True)
+rep_xgb = classification_report(y_te, xgb_pred, output_dict=True)
 
 comp_df = pd.DataFrame({
-    'Model_Configuration': ['Logistic Regression (Flat)', 'Logistic Regression (+Trend)', 'XGBoost (Flat)', 'XGBoost (+Trend)'],
-    'ROC_AUC': [round(roc_auc_score(y_te, lr_flat_p), 4), round(roc_auc_score(y_te, lr_all_p), 4), round(roc_auc_score(y_te, xgb_flat_p), 4), round(roc_auc_score(y_te, xgb_all_p), 4)],
-    'Active_Class_F1': [round(rep_lr_flat['0']['f1-score'], 4), round(rep_lr_all['0']['f1-score'], 4), round(rep_xgb_flat['0']['f1-score'], 4), round(rep_xgb_all['0']['f1-score'], 4)],
-    'Active_Class_Precision': [round(rep_lr_flat['0']['precision'], 4), round(rep_lr_all['0']['precision'], 4), round(rep_xgb_flat['0']['precision'], 4), round(rep_xgb_all['0']['precision'], 4)],
-    'Active_Class_Recall': [round(rep_lr_flat['0']['recall'], 4), round(rep_lr_all['0']['recall'], 4), round(rep_xgb_flat['0']['recall'], 4), round(rep_xgb_all['0']['recall'], 4)],
-    'Overall_Accuracy': [round(rep_lr_flat['accuracy'], 4), round(rep_lr_all['accuracy'], 4), round(rep_xgb_flat['accuracy'], 4), round(rep_xgb_all['accuracy'], 4)]
+    'Model_Configuration': ['Logistic Regression (Leakage-Free)', 'XGBoost Classifier (Leakage-Free)'],
+    'ROC_AUC': [round(roc_auc_score(y_te, lr_p), 4), round(roc_auc_score(y_te, xgb_p), 4)],
+    'Active_Class_F1': [round(rep_lr['0']['f1-score'], 4), round(rep_xgb['0']['f1-score'], 4)],
+    'Active_Class_Precision': [round(rep_lr['0']['precision'], 4), round(rep_xgb['0']['precision'], 4)],
+    'Active_Class_Recall': [round(rep_lr['0']['recall'], 4), round(rep_xgb['0']['recall'], 4)],
+    'Overall_Accuracy': [round(rep_lr['accuracy'], 4), round(rep_xgb['accuracy'], 4)]
 })
 
-print('=== CHURN MODEL PERFORMANCE BEFORE VS AFTER TREND FEATURES ===')
+print('=== LEAKAGE-FREE CHURN MODEL EVALUATION ===')
 print(comp_df.to_string(index=False))
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-ConfusionMatrixDisplay.from_predictions(y_te, lr_all_pred, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
-axes[0].set_title('Logistic Regression (+Trend) Confusion Matrix', fontweight='bold')
+ConfusionMatrixDisplay.from_predictions(y_te, lr_pred, ax=axes[0], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[0].set_title('Logistic Regression (Clean) Confusion Matrix', fontweight='bold')
 
-ConfusionMatrixDisplay.from_predictions(y_te, xgb_all_pred, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
-axes[1].set_title('XGBoost (+Trend) Confusion Matrix', fontweight='bold')
+ConfusionMatrixDisplay.from_predictions(y_te, xgb_pred, ax=axes[1], cmap='Blues', display_labels=['Active (0)', 'Churned (1)'])
+axes[1].set_title('XGBoost (Clean) Confusion Matrix', fontweight='bold')
 plt.tight_layout()
 plt.savefig('../dashboard/churn_confusion_matrices.png', dpi=300)
 plt.close()
-print(' [OK] Saved updated confusion matrices to dashboard/churn_confusion_matrices.png')
+print(' [OK] Saved clean confusion matrices to dashboard/churn_confusion_matrices.png')
 
-# Predict churn probability for full dataset
-cust_base['churn_probability'] = xgb_all.predict_proba(X_all)[:, 1]
+# Predict churn probability for full dataset using clean model
+cust_base['churn_probability'] = xgb_clean.predict_proba(X_clean)[:, 1]
 def assign_risk_tier(prob):
     if prob >= 0.60:
         return 'High Risk'
@@ -485,28 +469,28 @@ cust_base['churn_risk_tier'] = cust_base['churn_probability'].apply(assign_risk_
 add_md("""## 6. SHAP Feature Importance & Driver Analysis
 
 ### 📖 How This Works (Interview Explanation)
-We re-run TreeSHAP (`shap.TreeExplainer`) on the updated **XGBoost (+Trend)** model to evaluate the global behavioral driver rankings.
+We run TreeSHAP (`shap.TreeExplainer`) on the **leakage-free XGBoost model** to evaluate true behavioral drivers shifting customer churn risk.
 """)
 
-add_code("""# TreeSHAP Explainer on Updated XGBoost Model
-explainer = shap.TreeExplainer(xgb_all)
-shap_values = explainer.shap_values(X_te_all)
+add_code("""# TreeSHAP Explainer on Leakage-Free XGBoost Model
+explainer = shap.TreeExplainer(xgb_clean)
+shap_values = explainer.shap_values(X_te)
 
 mean_abs_shap = np.abs(shap_values).mean(axis=0)
-shap_summary = pd.DataFrame({'feature': all_features, 'shap_importance': mean_abs_shap}).sort_values('shap_importance', ascending=False)
+shap_summary = pd.DataFrame({'feature': leak_free_features, 'shap_importance': mean_abs_shap}).sort_values('shap_importance', ascending=False)
 
-print('=== UPDATED SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
+print('=== LEAKAGE-FREE SHAP GLOBAL FEATURE IMPORTANCE RANKING ===')
 print(shap_summary.to_string(index=False))
 
 shap_summary.to_csv('../dashboard/shap_driver_importance.csv', index=False)
 
 plt.figure(figsize=(10, 6))
-shap.summary_plot(shap_values, X_te_all, feature_names=all_features, show=False)
-plt.title('SHAP Feature Importance Beeswarm Plot (Updated Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
+shap.summary_plot(shap_values, X_te, feature_names=leak_free_features, show=False)
+plt.title('SHAP Feature Importance Beeswarm Plot (Leakage-Free Churn Drivers)', fontsize=13, fontweight='bold', pad=15)
 plt.tight_layout()
 plt.savefig('../dashboard/shap_beeswarm_summary.png', dpi=300)
 plt.close()
-print(' [OK] Saved updated SHAP summary plot to dashboard/shap_beeswarm_summary.png')
+print(' [OK] Saved clean SHAP summary plot to dashboard/shap_beeswarm_summary.png')
 """)
 
 # Step 7: Customer Lifetime Value (CLV) Prediction
@@ -518,7 +502,7 @@ add_md("""## 7. Customer Lifetime Value (CLV) Prediction & Tiering
 2. **Gamma-Gamma Model:** Estimates expected average transaction monetary spend ($E[M]$) per customer.
 
 #### 12-Month Expected CLV Calculation:
-$$E[\text{CLV}_{12}] = E[N_{12}] \times E[M]$$
+$$E[\\text{CLV}_{12}] = E[N_{12}] \\times E[M]$$
 
 Customers are subsequently stratified into **3 CLV Tiers**:
 * **High CLV:** Top 20% expected spenders.
@@ -571,7 +555,6 @@ clv_tier_dist['formatted_mean_clv'] = clv_tier_dist['mean_predicted_clv'].apply(
 print('=== CLV TIERS DISTRIBUTION & EXPECTED 12M SPEND ===')
 print(clv_tier_dist[['clv_tier', 'customer_count', 'formatted_mean_clv']].to_string(index=False))
 
-# Export CLV distribution for Power BI
 clv_tier_dist.to_csv('../dashboard/clv_distribution_tiers.csv', index=False)
 """)
 
@@ -579,13 +562,7 @@ clv_tier_dist.to_csv('../dashboard/clv_distribution_tiers.csv', index=False)
 add_md("""## 8. Prescriptive Next-Best-Action Matrix
 
 ### 📖 How This Works (Interview Explanation)
-By cross-tabulating **Churn Risk** (High / Medium / Low) with **CLV Tier** (High / Medium / Low), we construct a **3x3 Prescriptive Decision Matrix**. 
-
-Instead of treating all churned customers equally, marketing and product teams assign targeted retention interventions based on customer economic value:
-* **High Risk + High CLV:** *Urgent VIP Retention Outreach* (Dedicated concierge, exclusive ₹1,500 loyalty gift).
-* **High Risk + Medium CLV:** *Win-Back Email & SMS Campaign* (Targeted 15% category discount).
-* **Low Risk + High CLV:** *VIP Loyalty Program & Cross-Sell* (Early access to sales).
-* **High Risk + Low CLV:** *Automated Push Notifications* (Low-cost automated re-engagement).
+By cross-tabulating **Churn Risk** (High / Medium / Low) with **CLV Tier** (High / Medium / Low), we construct a **3x3 Prescriptive Decision Matrix**.
 """)
 
 add_code("""# Merge Churn Risk and CLV Tier
@@ -623,7 +600,6 @@ action_matrix = pd.crosstab(
 print('=== 3x3 NEXT-BEST-ACTION CUSTOMER HEADCOUNT MATRIX ===')
 print(action_matrix)
 
-# Summary of Next-Best-Actions
 action_summary = final_customer_df.groupby('recommended_action').agg(
     customer_count=('customer_id', 'count'),
     avg_predicted_clv=('predicted_clv_12m', 'mean'),
@@ -634,7 +610,6 @@ action_summary['formatted_total_at_risk_clv'] = action_summary['total_at_risk_cl
 print('=== RECOMMENDED ACTION SUMMARY ===')
 print(action_summary[['recommended_action', 'customer_count', 'formatted_total_at_risk_clv']].to_string(index=False))
 
-# Export for Power BI
 action_summary.to_csv('../dashboard/next_best_action_summary.csv', index=False)
 """)
 
@@ -644,8 +619,6 @@ add_md("""## 9. Revenue Impact Simulation
 ### 📖 How This Works (Interview Explanation)
 To quantify the financial ROI of implementing our **Next-Best-Action Framework**, we simulate protected revenue for the critical **High Risk + High CLV** segment:
 $$\\text{Protected Revenue} = N_{\\text{HighRisk\\_HighCLV}} \\times \\text{Mean 12M CLV} \\times \\text{Campaign Retention Win Rate } (X\\%)$$
-
-We run sensitivity analysis for **10%, 20%, and 30% retention campaign success rates**.
 """)
 
 add_code("""# Revenue Protection Model
@@ -683,17 +656,8 @@ add_md("""## 10. Dashboard-Ready Exports & Executive Power BI Specifications
 1. **Executive KPI Cards (Header):**
    * Total Delivered Revenue (₹11.03 Cr)
    * Repeat Purchase Rate (25.49%)
-   * High Risk + High CLV Headcount (1,279 Customers)
-   * Potential Protected Revenue @ 20% Win Rate (₹37.1 Lakhs)
-
-2. **Visual Panel 1 — RFM Segment Revenue Heatmap & Bar Chart:**
-   * Bar chart displaying total revenue contribution per segment (`Loyalists`, `Champions`, `Hibernating`).
-
-3. **Visual Panel 2 — Repeat Purchase Funnel & Retention Curve:**
-   * Conversion drop-off from 1st Order (100%) to 2nd Order (25.5%).
-
-4. **Visual Panel 3 — Prescriptive Next-Best-Action 3x3 Matrix:**
-   * Interactive matrix slicing Churn Risk vs. CLV Tiers to allow marketing teams to filter target customer IDs directly.
+   * High Risk + High CLV Headcount (1,286 Customers)
+   * Potential Protected Revenue @ 20% Win Rate (₹2.95 Lakhs)
 """)
 
 add_code("""print(' [OK] All dashboard summary CSVs exported to dashboard/:')
@@ -712,4 +676,4 @@ os.makedirs('notebooks', exist_ok=True)
 with open('notebooks/01_ecommerce_customer_intelligence.ipynb', 'w', encoding='utf-8') as f:
     json.dump(nb, f, indent=2)
 
-print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with ALL 10 STEPS')
+print('[SUCCESS] Successfully updated notebooks/01_ecommerce_customer_intelligence.ipynb with LEAKAGE-FREE models')

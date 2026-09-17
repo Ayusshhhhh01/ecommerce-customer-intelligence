@@ -20,19 +20,21 @@ This guide prepares you to present, justify, and answer tough technical & busine
 
 ### 3. How did you handle class imbalance in churn prediction?
 > **Model Answer:**  
-> *"With ~68.4% churned vs 31.6% active customers, relying on accuracy alone would be misleading. We implemented **`class_weight='balanced'` in Logistic Regression** and **`scale_pos_weight=0.46` in XGBoost**, penalizing false negatives on the active class. We evaluated Precision, Recall, and F1-score specifically for the minority active class alongside ROC-AUC."*
+> *"With ~68.4% churned vs 31.6% active customers, relying on accuracy alone would be misleading. We implemented **`class_weight='balanced'` in Logistic Regression** and **`scale_pos_weight` in XGBoost**, penalizing false negatives on the active class. We evaluated Precision, Recall, and F1-score specifically for the minority active class alongside ROC-AUC."*
 
 ---
 
-### 4. Why did flat snapshot features result in ROC-AUC ~0.58, and how did trend features boost XGBoost to 0.998?
+### 4. How did you audit and prevent Data Leakage in your Churn Model?
 > **Model Answer:**  
-> *"Flat features (`frequency`, `monetary`, `avg_order_val`) only measure historical volume, ignoring temporal momentum. We engineered 4 trend-based features—most notably `days_since_last_vs_avg_gap` (recency days divided by customer's own average gap) and `order_frequency_trend` (recent gap vs historical gap ratio). Because `days_since_last_vs_avg_gap` captures whether a customer is overdue relative to their personal baseline cadence, non-linear decision trees in XGBoost captured this threshold seamlessly, boosting ROC-AUC from 0.584 to 0.998."*
+> *"When we initially tested ratio features like `days_since_last_vs_avg_gap` (`recency_days / avg_inter_gap`), the XGBoost ROC-AUC jumped to 0.998. Upon performing a SHAP audit, `days_since_last_vs_avg_gap` contributed over 63% of total model importance. Because churn was defined as `recency_days > 90`, feeding recency-derived ratios directly into a retrospective snapshot model constituted target leakage (the feature contained the target label definition).*
+> 
+> *We conducted a strict audit, excluding `recency_days` and `days_since_last_vs_avg_gap` entirely. The resulting **leakage-free XGBoost model achieved 0.591 ROC-AUC**, relying on true non-leaky behavioral features like `frequency` (SHAP 0.407), `order_frequency_trend` (SHAP 0.147), and `avg_order_val` (SHAP 0.052). In production, the complete fix is to use a forward-looking target window (features extracted up to cutoff date T, churn observed in T+1 to T+90)."*
 
 ---
 
-### 5. What did SHAP analysis reveal about behavioral churn drivers?
+### 5. What did SHAP analysis reveal about leakage-free behavioral churn drivers?
 > **Model Answer:**  
-> *"TreeSHAP revealed that the top 2 churn drivers were `days_since_last_vs_avg_gap` (SHAP 3.30) and `order_frequency_trend` (SHAP 1.44), showing that cadence extension is the strongest signal of churn. Additionally, logistics friction was a key operational driver: **delivery delays >2 days past promised delivery in Tier 2/3 cities increased churn velocity by 42%**."*
+> *"TreeSHAP on the leakage-free model revealed that **`frequency` (0.407)** and **`order_frequency_trend` (0.147)** were the primary drivers. `order_frequency_trend` measures the ratio of the inter-purchase interval on the 2 most recent orders vs. historical baseline gap—capturing purchase velocity deceleration before churn occurs without leaking recency snapshot data."*
 
 ---
 
@@ -44,7 +46,7 @@ This guide prepares you to present, justify, and answer tough technical & busine
 
 ### 7. How does the Next-Best-Action Matrix translate insights into business ROI?
 > **Model Answer:**  
-> *"Rather than treating all churned customers equally with expensive blanket discounts, we cross-tabulate Churn Risk (High/Med/Low) × CLV Tier (High/Med/Low). For the **1,286 High Risk + High CLV customers**, we deploy high-touch VIP retention (concierge call + ₹1,500 voucher), protecting **₹2.95L–₹4.43L in annual revenue** at a 20-30% win rate while avoiding unnecessary discount spend on low-value churners."*
+> *"Rather than treating all churned customers equally with expensive blanket discounts, we cross-tabulate Churn Risk (High/Med/Low) × CLV Tier (High/Med/Low). For high-value at-risk customers, we deploy high-touch VIP retention (concierge call + voucher), protecting at-risk revenue at a 20-30% win rate while avoiding unnecessary discount spend on low-value churners."*
 
 ---
 
@@ -62,4 +64,4 @@ This guide prepares you to present, justify, and answer tough technical & busine
 
 ### 10. How would you deploy this project into production?
 > **Model Answer:**  
-> *"I would deploy the feature engineering and XGBoost inference pipeline as an automated Airflow batch job running weekly. Churn risk scores and CLV tiers would be synced to our Customer Data Platform (CDP / Segment / Braze), automatically triggering dynamic SMS/Email win-back workflows when `days_since_last_vs_avg_gap > 1.2`."*
+> *"I would deploy the feature engineering and XGBoost inference pipeline as an automated Airflow batch job running weekly using a 90-day forward-looking target window. Churn risk scores and CLV tiers would be synced to our Customer Data Platform (CDP / Segment / Braze), automatically triggering dynamic SMS/Email win-back workflows when velocity shifts occur."*

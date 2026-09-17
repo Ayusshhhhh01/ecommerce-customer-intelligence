@@ -37,7 +37,11 @@ D:\Ssshhhh\Projexts\E commerce\
 │   └── 02_rfm_metrics.sql                # RFM aggregations & LAG window functions
 ├── notebooks/                            # Jupyter Notebooks
 │   └── 01_ecommerce_customer_intelligence.ipynb # Complete 10-step executable notebook
+├── src/                                  # Modular Python Source Code
+│   ├── data_loader.py                    # Fact table & dataset loading functions
+│   └── rfm_analytics.py                  # RFM scoring & segmentation logic
 ├── dashboard/                            # Exported summary tables & visuals for Power BI
+│   ├── powerbi_executive_dashboard.png   # 4-panel executive dashboard preview
 │   ├── cohort_retention_heatmap.png      # Monthly active cohort heatmap
 │   ├── repeat_purchase_funnel.png        # Lifecycle milestone funnel chart
 │   ├── churn_confusion_matrices.png      # Confusion matrix comparison
@@ -49,7 +53,9 @@ D:\Ssshhhh\Projexts\E commerce\
 │   └── next_best_action_summary.csv      # 3x3 Prescriptive action matrix
 ├── generate_indian_dataset.py            # Synthetic dataset generator script
 ├── generate_indian_notebook.py           # Notebook generator script
+├── generate_dashboard_preview.py         # Dashboard image generator script
 ├── EXECUTIVE_SUMMARY.md                  # 1-page business report for leadership
+├── INTERVIEW_PREP.md                     # 10 interview Q&As, Data Leakage Audit, & model answers
 ├── RESUME_BULLETS.md                     # 3 metric-backed, interview-ready resume bullets
 └── README.md                             # Project documentation
 ```
@@ -76,22 +82,20 @@ D:\Ssshhhh\Projexts\E commerce\
 | **At-Risk** | 742 | 4.01% | **₹71.49L** | 6.48% | 300.0 | ₹9,634.82 |
 | **Can't Lose Them** | 56 | 0.30% | **₹8.77L** | 0.79% | 425.8 | **₹15,652.58** |
 
-### 2. Churn Model Performance (Flat vs. Trend-Augmented)
+### 2. Leakage-Free Churn Model Performance
 
 | Model Configuration | Feature Set | ROC-AUC | Active Class Precision | Active Class Recall | Active Class F1-Score | Overall Accuracy |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Logistic Regression (Baseline)** | Flat Snapshots | 0.5851 | 0.4602 | 0.3682 | 0.4091 | 66.40% |
-| **Logistic Regression (+Trend)** | Trend-Augmented | 0.5813 | 0.4609 | 0.3669 | 0.4085 | 66.44% |
-| **XGBoost Classifier (Baseline)** | Flat Snapshots | 0.5842 | 0.4441 | 0.3833 | 0.4115 | 65.36% |
-| **XGBoost Classifier (+Trend)** | **Trend-Augmented** | **0.9982** | **0.9517** | **0.9836** | **0.9674** | **97.90%** |
+| **Logistic Regression (Clean)** | Leakage-Free | 0.5838 | 0.4602 | 0.3682 | 0.4091 | 66.40% |
+| **XGBoost Classifier (Clean)** | **Leakage-Free** | **0.5910** | **0.4668** | **0.3511** | **0.4008** | **66.83%** |
 
 ### 3. Prescriptive Next-Best-Action Matrix (Headcount & Strategy)
 
 | Churn Risk Tier | Low CLV (Bottom 50%) | Medium CLV (Middle 30%) | High CLV (Top 20%) | Action Strategy |
 | :--- | :---: | :---: | :---: | :--- |
-| **High Risk** | 5,548 | 5,355 | **1,286** | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Email |
-| **Medium Risk** | 33 | 64 | 397 | Proactive Product Cross-Sell Series |
-| **Low Risk** | 3,668 | 129 | 2,017 | VIP Loyalty Program & Early Sale Access |
+| **High Risk** | 764 | 484 | 14 | **High CLV:** VIP Concierge Call + ₹1,500 Voucher<br>**Med CLV:** Win-Back 15% Discount Email |
+| **Medium Risk** | 8,485 | 4,970 | 2,589 | Proactive Product Cross-Sell Series |
+| **Low Risk** | 0 | 94 | 1,097 | VIP Loyalty Program & Early Sale Access |
 
 ---
 
