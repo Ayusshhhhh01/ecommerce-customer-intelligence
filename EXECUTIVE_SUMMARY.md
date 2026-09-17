@@ -33,19 +33,19 @@ Acquisition-focused growth without post-purchase retention leads to leaky-bucket
 
 | Customer Segment | Risk & Value Quadrant | Headcount | Prescriptive Strategy & Action | Projected Impact |
 | :--- | :--- | :---: | :--- | :--- |
-| **High Risk + High CLV** | Critical At-Risk VIPs | **595** | **VIP Urgent Retention:** Dedicated concierge outreach + ₹1,500 exclusive category voucher. | Protects **₹4.90 Lakhs** in annual revenue @ 20% win rate (out of ₹24.48L total risk). |
-| **High Risk + Medium CLV** | Win-Back Targets | **1,928** | **Automated Win-Back Campaign:** Targeted 15% category discount offer. | Re-engages mid-tier buyers before complete dormancy. |
-| **High Risk + Low CLV** | Low-Value Churners | **3,643** | **Low-Cost Push Notification Series:** Automated lifecycle notifications. | Zero discount spend passive re-engagement. |
-| **Medium Risk + High CLV** | High-Potential Growth | **292** | **Proactive Engagement & Cross-Sell:** Product recommendations + category discovery. | Safeguards **₹8.53 Lakhs** total expected CLV. |
-| **Low Risk + High CLV** | Brand Champions | **2,813** | **VIP Loyalty Program:** Early sale access, priority delivery, & rewards. | Protects **₹48.42 Lakhs** top spender CLV & advocacy. |
+| **High Risk + High CLV** | Critical At-Risk VIPs | **1,258** | **VIP Urgent Retention:** Dedicated concierge outreach + ₹1,500 exclusive category voucher. | Protects **₹9.08 Lakhs** in annual revenue @ 20% win rate (out of ₹45.40L total risk). |
+| **High Risk + Medium CLV** | Win-Back Targets | **1,956** | **Automated Win-Back Campaign:** Targeted 15% category discount offer. | Re-engages mid-tier buyers before complete dormancy (₹21.35L total risk). |
+| **High Risk + Low CLV** | Low-Value Churners | **2,952** | **Low-Cost Push Notification Series:** Automated lifecycle notifications. | Zero discount spend passive re-engagement (₹14.78L total risk). |
+| **Medium Risk + High CLV** | High-Potential Growth | **1,119** | **Proactive Engagement & Cross-Sell:** Product recommendations + category discovery. | Safeguards **₹25.90 Lakhs** total expected CLV. |
+| **Low Risk + High CLV** | Brand Champions | **1,323** | **VIP Loyalty Program:** Early sale access, priority delivery, & rewards. | Protects **₹31.79 Lakhs** top spender CLV & advocacy. |
 
 ---
 
 ## 💰 Projected Financial Impact
-By executing the **VIP Urgent Retention Strategy** on the 595 High Risk + High CLV customers (avg. expected spend ₹4,113.49):
-- **At 10% Campaign Win Rate:** Protects **₹2.45 Lakhs** in annual net revenue.
-- **At 20% Campaign Win Rate:** Protects **₹4.90 Lakhs** in annual net revenue.
-- **At 30% Campaign Win Rate:** Protects **₹7.34 Lakhs** in annual net revenue.
+By executing the **VIP Urgent Retention Strategy** on the 1,258 High Risk + High CLV customers (avg. expected spend ₹3,609.12):
+- **At 10% Campaign Win Rate:** Protects **₹4.54 Lakhs** in annual net revenue.
+- **At 20% Campaign Win Rate:** Protects **₹9.08 Lakhs** in annual net revenue.
+- **At 30% Campaign Win Rate:** Protects **₹13.62 Lakhs** in annual net revenue.
 
 ---
 
