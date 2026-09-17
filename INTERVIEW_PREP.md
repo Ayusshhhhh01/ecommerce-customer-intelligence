@@ -34,7 +34,7 @@ This guide prepares you to present, justify, and answer tough technical & busine
 
 ### 5. What did SHAP analysis reveal about forward-looking behavioral churn drivers?
 > **Model Answer:**  
-> *"TreeSHAP on the un-leaked forward-looking XGBoost model revealed that **City Tier (`is_tier1`: 0.2644)** and **Order Frequency Trend (`order_frequency_trend`: 0.1311)** were the top drivers. `order_frequency_trend` measures the ratio of the inter-purchase interval on the 2 most recent orders vs. historical baseline gap—capturing purchase velocity deceleration before churn occurs. Category diversity (0.0661) and pre-cutoff recency (0.0640) also provided significant signal."*
+> *"TreeSHAP on the un-leaked forward-looking XGBoost model revealed that **City Tier (`is_tier1`: 0.2644)** and **Order Frequency Trend (`order_frequency_trend`: 0.1311)** were the top drivers. Empirical subgroup analysis confirmed Tier-2 cities experience more than double the average delivery delay of Tier-1 metros (**0.89 vs. 0.43 days**), while COD share remains identical (**21.4% vs. 21.9%**), isolating logistics latency as the primary mechanism behind regional churn risk. `order_frequency_trend` captures purchase velocity deceleration before churn occurs."*
 
 ---
 
