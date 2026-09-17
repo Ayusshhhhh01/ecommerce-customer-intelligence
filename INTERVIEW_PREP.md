@@ -73,3 +73,11 @@ This guide prepares you to present, justify, and answer tough technical & busine
 > *"In rare-event classification (such as a forward-looking 90-day retention window where active buyers are a minority class), predicted probabilities from calibrated models cluster around the base rate. Applying fixed thresholds (e.g., $P \ge 0.60$ High, $P \ge 0.30$ Medium) collapses almost the entire customer base into High and Medium risk (sweeping >99% above 0.30), leaving the Low Risk bucket virtually empty.*
 > 
 > *To maintain an actionable 3-tier operational framework for marketing operations, we used **quantile-based terciles** (`pd.qcut` into top 33.3% High, middle 33.3% Medium, bottom 33.3% Low Risk). This relative rank-ordering ensures equal, balanced operational capacity allocation across marketing channels, exactly matching how CLV tiers are constructed."*
+
+---
+
+### 12. What did the cross-tabulation reveal about the relationship between customer value (CLV) and churn risk?
+> **Model Answer:**  
+> *"Our 3x3 matrix revealed that churn risk is statistically independent of customer Lifetime Value (CLV). High-CLV customers split almost evenly across risk tiers: **1,323 Low Risk (35.8%)**, **1,119 Medium Risk (30.2%)**, and **1,258 High Risk (34.0%)** out of 3,700 top spenders.*
+> 
+> *This provides a compelling business justification for systematic predictive scoring: leadership cannot assume top spenders are safe by default. Without proactive model scoring, 34% of High-CLV customers (1,258 VIPs representing ₹45.40 Lakhs in expected 12-month spend) would silently drift into dormancy without intervention."*
